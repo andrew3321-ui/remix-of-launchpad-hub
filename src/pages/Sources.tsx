@@ -18,6 +18,7 @@ import { UChatWorkspacesEditor } from "@/components/launches/UChatWorkspacesEdit
 import { useLaunch } from "@/contexts/LaunchContext";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
+import { normalizeSyncRun, STALE_SYNC_ERROR_MESSAGE } from "@/lib/syncRuns";
 import { DownloadCloud, Loader2, Radio, ShieldCheck } from "lucide-react";
 
 interface NamedTag {
@@ -52,6 +53,17 @@ interface SyncRunRow {
   metadata: Record<string, unknown> | null;
 }
 
+interface SourcesDraft {
+  acApiUrl: string;
+  acApiKey: string;
+  acListId: string;
+  acNamedTags: NamedTag[];
+  manychatApiUrl: string;
+  manychatApiKey: string;
+  manychatAccountId: string;
+  uchatWorkspaces: UChatWorkspace[];
+}
+
 const emptyUChatWorkspace: UChatWorkspace = {
   workspace_name: "",
   workspace_id: "",
@@ -65,6 +77,10 @@ const pendingSyncMaxAgeMs = 1000 * 60 * 30;
 
 function pendingSyncStorageKey(launchId: string, source: SyncSource) {
   return `megafone-sync-pending:${launchId}:${source}`;
+}
+
+function sourcesDraftStorageKey(launchId: string) {
+  return `megafone-sources-draft:${launchId}`;
 }
 
 function markPendingSync(launchId: string, source: SyncSource) {
@@ -93,6 +109,18 @@ function hasPendingSync(launchId: string, source: SyncSource) {
   }
 }
 
+function loadSourcesDraft(launchId: string) {
+  const rawValue = localStorage.getItem(sourcesDraftStorageKey(launchId));
+  if (!rawValue) return null;
+
+  try {
+    return JSON.parse(rawValue) as SourcesDraft;
+  } catch {
+    localStorage.removeItem(sourcesDraftStorageKey(launchId));
+    return null;
+  }
+}
+
 function ConnectionBadge({ connected }: { connected: boolean }) {
   return (
     <Badge variant={connected ? "default" : "secondary"}>
@@ -106,11 +134,13 @@ function SyncRunBadge({ run }: { run: SyncRunRow | null }) {
     return <Badge variant="outline">Nenhuma importacao ainda</Badge>;
   }
 
-  if (run.status === "failed") {
+  const normalizedRun = normalizeSyncRun(run);
+
+  if (normalizedRun.status === "failed") {
     return <Badge variant="destructive">Falhou</Badge>;
   }
 
-  if (run.status === "running") {
+  if (normalizedRun.status === "running") {
     return <Badge variant="secondary">Em andamento</Badge>;
   }
 
@@ -158,8 +188,25 @@ export default function Sources() {
       return [] as SyncRunRow[];
     }
 
-    const rows = (data || []) as SyncRunRow[];
-    setSyncRuns(rows);
+    const fetchedRows = (data || []) as SyncRunRow[];
+    const normalizedRows = fetchedRows.map((run) => normalizeSyncRun(run));
+    const staleRunIds = normalizedRows
+      .filter((run, index) => fetchedRows[index].status === "running" && run.status === "failed")
+      .map((run) => run.id);
+
+    if (staleRunIds.length > 0) {
+      void supabase
+        .from("platform_sync_runs")
+        .update({
+          status: "failed",
+          finished_at: new Date().toISOString(),
+          last_error: STALE_SYNC_ERROR_MESSAGE,
+        })
+        .in("id", staleRunIds)
+        .eq("launch_id", launchId);
+    }
+
+    setSyncRuns(normalizedRows);
 
     const nextSyncingState: Record<SyncSource, boolean> = {
       activecampaign: false,
@@ -167,23 +214,47 @@ export default function Sources() {
     };
 
     (["activecampaign", "uchat"] as SyncSource[]).forEach((source) => {
-      const latestRun = rows.find((run) => run.source === source) || null;
-      if (latestRun?.status === "running") {
-        nextSyncingState[source] = true;
-        markPendingSync(launchId, source);
-        return;
-      }
+      const latestRun = normalizedRows.find((run) => run.source === source) || null;
+      const backendStillRunning = latestRun?.status === "running";
 
       if (latestRun?.status === "completed" || latestRun?.status === "failed") {
         clearPendingSync(launchId, source);
       }
 
-      nextSyncingState[source] = hasPendingSync(launchId, source);
+      nextSyncingState[source] = backendStillRunning || hasPendingSync(launchId, source);
     });
 
     setSyncingState(nextSyncingState);
-    return rows;
+    return normalizedRows;
   };
+
+  useEffect(() => {
+    if (!activeLaunch || loading) return;
+
+    const draft: SourcesDraft = {
+      acApiUrl,
+      acApiKey,
+      acListId,
+      acNamedTags,
+      manychatApiUrl,
+      manychatApiKey,
+      manychatAccountId,
+      uchatWorkspaces,
+    };
+
+    localStorage.setItem(sourcesDraftStorageKey(activeLaunch.id), JSON.stringify(draft));
+  }, [
+    acApiKey,
+    acApiUrl,
+    acListId,
+    acNamedTags,
+    activeLaunch,
+    loading,
+    manychatAccountId,
+    manychatApiKey,
+    manychatApiUrl,
+    uchatWorkspaces,
+  ]);
 
   useEffect(() => {
     const load = async () => {
@@ -230,16 +301,7 @@ export default function Sources() {
         toast({ title: "Erro ao carregar UChat", description: workspaceError.message, variant: "destructive" });
       }
 
-      setAcApiUrl(launchData?.ac_api_url ?? "");
-      setAcApiKey(launchData?.ac_api_key ?? "");
-      setAcListId(launchData?.ac_default_list_id ?? "");
-      setAcNamedTags(Array.isArray(launchData?.ac_named_tags) ? (launchData.ac_named_tags as unknown as NamedTag[]) : []);
-
-      setManychatApiUrl(launchData?.manychat_api_url ?? "");
-      setManychatApiKey(launchData?.manychat_api_key ?? "");
-      setManychatAccountId(launchData?.manychat_account_id ?? "");
-
-      setUchatWorkspaces(
+      const backendWorkspaces =
         workspaceData?.map((workspace) => ({
           id: workspace.id,
           workspace_name: workspace.workspace_name,
@@ -248,8 +310,22 @@ export default function Sources() {
           api_token: workspace.api_token,
           max_subscribers: workspace.max_subscribers,
           current_count: workspace.current_count,
-        })) ?? [],
+        })) ?? [];
+
+      const draft = loadSourcesDraft(activeLaunch.id);
+
+      setAcApiUrl(draft?.acApiUrl ?? launchData?.ac_api_url ?? "");
+      setAcApiKey(draft?.acApiKey ?? launchData?.ac_api_key ?? "");
+      setAcListId(draft?.acListId ?? launchData?.ac_default_list_id ?? "");
+      setAcNamedTags(
+        draft?.acNamedTags ??
+          (Array.isArray(launchData?.ac_named_tags) ? (launchData.ac_named_tags as unknown as NamedTag[]) : []),
       );
+
+      setManychatApiUrl(draft?.manychatApiUrl ?? launchData?.manychat_api_url ?? "");
+      setManychatApiKey(draft?.manychatApiKey ?? launchData?.manychat_api_key ?? "");
+      setManychatAccountId(draft?.manychatAccountId ?? launchData?.manychat_account_id ?? "");
+      setUchatWorkspaces(draft?.uchatWorkspaces ?? backendWorkspaces);
 
       await loadSyncRuns(activeLaunch.id, true);
       setLoading(false);
@@ -262,7 +338,7 @@ export default function Sources() {
     if (!activeLaunch) return;
 
     const hasOngoingSync =
-      syncingState.activecampaign || syncingState.uchat || syncRuns.some((run) => run.status === "running");
+      syncingState.activecampaign || syncingState.uchat || syncRuns.some((run) => normalizeSyncRun(run).status === "running");
 
     if (!hasOngoingSync) return;
 
@@ -630,15 +706,15 @@ export default function Sources() {
                 {latestActiveCampaignRun ? (
                   <div className="mt-3 space-y-1">
                     <p>
-                      Processados: {latestActiveCampaignRun.processed_count} | Novos: {latestActiveCampaignRun.created_count} | Mesclados:{" "}
-                      {latestActiveCampaignRun.merged_count}
+                      Processados: {normalizeSyncRun(latestActiveCampaignRun).processed_count} | Novos: {normalizeSyncRun(latestActiveCampaignRun).created_count} | Mesclados:{" "}
+                      {normalizeSyncRun(latestActiveCampaignRun).merged_count}
                     </p>
                     <p>
-                      Ignorados: {latestActiveCampaignRun.skipped_count} | Erros: {latestActiveCampaignRun.error_count}
+                      Ignorados: {normalizeSyncRun(latestActiveCampaignRun).skipped_count} | Erros: {normalizeSyncRun(latestActiveCampaignRun).error_count}
                     </p>
                     <p>Inicio: {new Date(latestActiveCampaignRun.started_at).toLocaleString("pt-BR")}</p>
-                    {latestActiveCampaignRun.last_error && (
-                      <p className="text-destructive">Ultimo erro: {latestActiveCampaignRun.last_error}</p>
+                    {normalizeSyncRun(latestActiveCampaignRun).last_error && (
+                      <p className="text-destructive">Ultimo erro: {normalizeSyncRun(latestActiveCampaignRun).last_error}</p>
                     )}
                   </div>
                 ) : (
@@ -733,13 +809,13 @@ export default function Sources() {
                 {latestUchatRun ? (
                   <div className="mt-3 space-y-1">
                     <p>
-                      Processados: {latestUchatRun.processed_count} | Novos: {latestUchatRun.created_count} | Mesclados: {latestUchatRun.merged_count}
+                      Processados: {normalizeSyncRun(latestUchatRun).processed_count} | Novos: {normalizeSyncRun(latestUchatRun).created_count} | Mesclados: {normalizeSyncRun(latestUchatRun).merged_count}
                     </p>
                     <p>
-                      Ignorados: {latestUchatRun.skipped_count} | Erros: {latestUchatRun.error_count}
+                      Ignorados: {normalizeSyncRun(latestUchatRun).skipped_count} | Erros: {normalizeSyncRun(latestUchatRun).error_count}
                     </p>
                     <p>Inicio: {new Date(latestUchatRun.started_at).toLocaleString("pt-BR")}</p>
-                    {latestUchatRun.last_error && <p className="text-destructive">Ultimo erro: {latestUchatRun.last_error}</p>}
+                    {normalizeSyncRun(latestUchatRun).last_error && <p className="text-destructive">Ultimo erro: {normalizeSyncRun(latestUchatRun).last_error}</p>}
                   </div>
                 ) : (
                   <p className="mt-3">Use o importador para puxar os subscribers de cada workspace configurado.</p>

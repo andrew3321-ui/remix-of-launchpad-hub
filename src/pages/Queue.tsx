@@ -4,6 +4,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { useLaunch } from "@/contexts/LaunchContext";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
+import { normalizeSyncRun, STALE_SYNC_ERROR_MESSAGE } from "@/lib/syncRuns";
 import { ListOrdered, Loader2 } from "lucide-react";
 
 type SyncSource = "activecampaign" | "uchat";
@@ -90,7 +91,25 @@ export default function Queue() {
       }
 
       if (mounted) {
-        setRuns((syncData || []) as SyncRunRow[]);
+        const fetchedRuns = (syncData || []) as SyncRunRow[];
+        const normalizedRuns = fetchedRuns.map((run) => normalizeSyncRun(run));
+        const staleRunIds = normalizedRuns
+          .filter((run, index) => fetchedRuns[index].status === "running" && run.status === "failed")
+          .map((run) => run.id);
+
+        if (staleRunIds.length > 0 && activeLaunch) {
+          void supabase
+            .from("platform_sync_runs")
+            .update({
+              status: "failed",
+              finished_at: new Date().toISOString(),
+              last_error: STALE_SYNC_ERROR_MESSAGE,
+            })
+            .in("id", staleRunIds)
+            .eq("launch_id", activeLaunch.id);
+        }
+
+        setRuns(normalizedRuns);
         setLogs((logData || []) as ProcessingLogRow[]);
         setLoading(false);
       }
@@ -108,7 +127,7 @@ export default function Queue() {
     };
   }, [activeLaunch, toast]);
 
-  const runningRuns = useMemo(() => runs.filter((run) => run.status === "running"), [runs]);
+  const runningRuns = useMemo(() => runs.filter((run) => normalizeSyncRun(run).status === "running"), [runs]);
 
   if (!activeLaunch) {
     return (
@@ -180,8 +199,8 @@ export default function Queue() {
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div className="flex flex-wrap items-center gap-2">
                         <p className="font-medium">{run.source === "activecampaign" ? "ActiveCampaign" : "UChat"}</p>
-                        <Badge variant={statusVariant(run.status)}>
-                          {run.status === "running" ? "Em andamento" : run.status === "failed" ? "Falhou" : "Concluida"}
+                        <Badge variant={statusVariant(normalizeSyncRun(run).status)}>
+                          {normalizeSyncRun(run).status === "running" ? "Em andamento" : normalizeSyncRun(run).status === "failed" ? "Falhou" : "Concluida"}
                         </Badge>
                       </div>
                       <p className="text-xs text-muted-foreground">{new Date(run.started_at).toLocaleString("pt-BR")}</p>
@@ -194,7 +213,7 @@ export default function Queue() {
                       <p>Erros: {run.error_count}</p>
                     </div>
 
-                    {run.last_error && <p className="mt-3 text-sm text-destructive">Ultimo erro: {run.last_error}</p>}
+                    {normalizeSyncRun(run).last_error && <p className="mt-3 text-sm text-destructive">Ultimo erro: {normalizeSyncRun(run).last_error}</p>}
                   </div>
                 ))
               )}
