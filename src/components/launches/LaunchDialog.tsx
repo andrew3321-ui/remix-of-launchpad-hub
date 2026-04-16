@@ -80,32 +80,29 @@ export function LaunchDialog({ open, onOpenChange, launchId, onSaved }: Props) {
     setLoading(false);
   };
 
-  const resolveUniqueSlug = async (baseSlug: string) => {
-    const { data, error } = await supabase.from("launches").select("id, slug").not("slug", "is", null);
+  const withTimeout = async <T,>(promise: Promise<T>, message: string, timeoutMs = 15000): Promise<T> => {
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
-    if (error) {
-      throw error;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutId = setTimeout(() => reject(new Error(message)), timeoutMs);
+    });
+
+    try {
+      return await Promise.race([promise, timeoutPromise]);
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
     }
+  };
 
-    const takenSlugs = new Set(
-      (data ?? [])
-        .filter((launch) => launch.id !== launchId)
-        .map((launch) => launch.slug)
-        .filter((launchSlug): launchSlug is string => Boolean(launchSlug)),
-    );
+  const buildSlugCandidate = (baseSlug: string, attempt: number) => {
+    if (attempt === 0) return baseSlug;
+    return `${baseSlug}-${attempt + 1}`;
+  };
 
-    if (!takenSlugs.has(baseSlug)) {
-      return baseSlug;
-    }
-
-    let suffix = 2;
-    let candidate = `${baseSlug}-${suffix}`;
-    while (takenSlugs.has(candidate)) {
-      suffix += 1;
-      candidate = `${baseSlug}-${suffix}`;
-    }
-
-    return candidate;
+  const isDuplicateSlugError = (error: { code?: string; message?: string } | null) => {
+    if (!error) return false;
+    const message = `${error.code ?? ""} ${error.message ?? ""}`.toLowerCase();
+    return error.code === "23505" || (message.includes("duplicate") && message.includes("slug"));
   };
 
   const handleNameChange = (value: string) => {
@@ -143,23 +140,25 @@ export function LaunchDialog({ open, onOpenChange, launchId, onSaved }: Props) {
         return;
       }
 
-      const safeSlug = await resolveUniqueSlug(baseSlug);
-
-      const launchData = {
-        name: name.trim(),
-        slug: safeSlug,
-        status: "active",
-        custom_states: customStates as unknown as import("@/integrations/supabase/types").Json,
-        whatsapp_group_link: whatsappLink || null,
-      };
-
       if (isEditing) {
-        const { error, data } = await supabase
-          .from("launches")
-          .update(launchData)
-          .eq("id", launchId)
-          .select("id")
-          .single();
+        const updateSlug = baseSlug;
+        const launchData = {
+          name: name.trim(),
+          slug: updateSlug,
+          status: "active",
+          custom_states: customStates as unknown as import("@/integrations/supabase/types").Json,
+          whatsapp_group_link: whatsappLink || null,
+        };
+
+        const { error, data } = await withTimeout(
+          supabase
+            .from("launches")
+            .update(launchData)
+            .eq("id", launchId)
+            .select("id")
+            .single(),
+          "O backend demorou demais para responder ao salvar o lancamento. Tente novamente.",
+        );
 
         if (error || !data) {
           toast({
@@ -167,42 +166,72 @@ export function LaunchDialog({ open, onOpenChange, launchId, onSaved }: Props) {
             description: error?.message || "O lancamento nao retornou confirmacao do backend.",
             variant: "destructive",
           });
-          setSaving(false);
           return;
         }
       } else {
-        const { error, data } = await supabase
-          .from("launches")
-          .insert({ ...launchData, created_by: user.id })
-          .select("id")
-          .single();
+        let createdSlug = baseSlug;
+        let slugAdjusted = false;
+        let created = false;
 
-        if (error || !data) {
+        for (let attempt = 0; attempt < 4; attempt += 1) {
+          const candidateSlug = buildSlugCandidate(baseSlug, attempt);
+          const launchData = {
+            name: name.trim(),
+            slug: candidateSlug,
+            status: "active",
+            custom_states: customStates as unknown as import("@/integrations/supabase/types").Json,
+            whatsapp_group_link: whatsappLink || null,
+            created_by: user.id,
+          };
+
+          const { error, data } = await withTimeout(
+            supabase.from("launches").insert(launchData).select("id, slug").single(),
+            "O backend demorou demais para responder ao criar o lancamento. Tente novamente.",
+          );
+
+          if (!error && data?.id) {
+            createdSlug = data.slug || candidateSlug;
+            slugAdjusted = createdSlug !== baseSlug;
+            created = true;
+            break;
+          }
+
+          if (!isDuplicateSlugError(error)) {
+            toast({
+              title: "Erro ao criar",
+              description: error?.message || "O backend nao confirmou a criacao do lancamento.",
+              variant: "destructive",
+            });
+            return;
+          }
+        }
+
+        if (!created) {
           toast({
-            title: "Erro ao criar",
-            description: error?.message || "O backend nao confirmou a criacao do lancamento.",
+            title: "Slug em uso",
+            description: "Nao conseguimos reservar um identificador unico para esse lancamento. Tente outro nome ou slug.",
             variant: "destructive",
           });
-          setSaving(false);
           return;
+        }
+
+        if (slugAdjusted) {
+          setSlug(createdSlug);
+          setSlugManual(true);
+          toast({
+            title: "Slug ajustado automaticamente",
+            description: `Ja existia um lancamento com esse identificador. Usamos "${createdSlug}" para evitar conflito.`,
+          });
         }
       }
 
-      if (safeSlug !== baseSlug) {
-        setSlug(safeSlug);
-        setSlugManual(true);
-        toast({
-          title: "Slug ajustado automaticamente",
-          description: `Ja existia um lancamento com esse identificador. Usamos "${safeSlug}" para evitar conflito.`,
-        });
-      }
-
       toast({ title: isEditing ? "Lancamento atualizado!" : "Lancamento criado!" });
-      setSaving(false);
       onSaved();
     } catch (error) {
       const message = error instanceof Error ? error.message : "Falha inesperada ao salvar o lancamento.";
+      console.error("launch save failed", error);
       toast({ title: "Erro no lancamento", description: message, variant: "destructive" });
+    } finally {
       setSaving(false);
     }
   };
