@@ -29,10 +29,23 @@ export default function Launches() {
   const [editingId, setEditingId] = useState<string | null>(null);
 
   const fetchRows = async () => {
-    const { data } = await supabase
+    setLoading(true);
+    const { data, error } = await supabase
       .from("launches")
       .select("id, name, slug, status, created_at")
       .order("created_at", { ascending: false });
+
+    if (error) {
+      toast({
+        title: "Erro ao carregar lancamentos",
+        description: error.message,
+        variant: "destructive",
+      });
+      setRows([]);
+      setLoading(false);
+      return;
+    }
+
     if (data) setRows(data);
     setLoading(false);
   };

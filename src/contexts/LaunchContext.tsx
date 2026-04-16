@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "./AuthContext";
 
 interface Launch {
@@ -29,6 +30,7 @@ export const useLaunch = () => useContext(LaunchContext);
 
 export function LaunchProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
+  const { toast } = useToast();
   const [launches, setLaunches] = useState<Launch[]>([]);
   const [activeLaunch, setActiveLaunch] = useState<Launch | null>(null);
   const [loading, setLoading] = useState(true);
@@ -41,10 +43,22 @@ export function LaunchProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("launches")
       .select("id, name, slug, status")
       .order("created_at", { ascending: false });
+
+    if (error) {
+      toast({
+        title: "Erro ao atualizar lancamentos",
+        description: error.message,
+        variant: "destructive",
+      });
+      setLaunches([]);
+      setActiveLaunch(null);
+      setLoading(false);
+      return;
+    }
 
     if (data) {
       setLaunches(data);
@@ -56,7 +70,7 @@ export function LaunchProvider({ children }: { children: ReactNode }) {
       });
     }
     setLoading(false);
-  }, [user]);
+  }, [toast, user]);
 
   useEffect(() => {
     fetchLaunches();

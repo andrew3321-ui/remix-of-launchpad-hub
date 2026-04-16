@@ -80,41 +80,131 @@ export function LaunchDialog({ open, onOpenChange, launchId, onSaved }: Props) {
     setLoading(false);
   };
 
+  const resolveUniqueSlug = async (baseSlug: string) => {
+    const { data, error } = await supabase.from("launches").select("id, slug").not("slug", "is", null);
+
+    if (error) {
+      throw error;
+    }
+
+    const takenSlugs = new Set(
+      (data ?? [])
+        .filter((launch) => launch.id !== launchId)
+        .map((launch) => launch.slug)
+        .filter((launchSlug): launchSlug is string => Boolean(launchSlug)),
+    );
+
+    if (!takenSlugs.has(baseSlug)) {
+      return baseSlug;
+    }
+
+    let suffix = 2;
+    let candidate = `${baseSlug}-${suffix}`;
+    while (takenSlugs.has(candidate)) {
+      suffix += 1;
+      candidate = `${baseSlug}-${suffix}`;
+    }
+
+    return candidate;
+  };
+
   const handleNameChange = (value: string) => {
     setName(value);
     if (!slugManual) setSlug(slugify(value));
   };
 
   const handleSave = async () => {
-    if (!name.trim() || !user) return;
-    setSaving(true);
-
-    const launchData = {
-      name: name.trim(),
-      slug: slug.trim() || slugify(name),
-      custom_states: customStates as unknown as import("@/integrations/supabase/types").Json,
-      whatsapp_group_link: whatsappLink || null,
-    };
-
-    if (isEditing) {
-      const { error } = await supabase.from("launches").update(launchData).eq("id", launchId);
-      if (error) {
-        toast({ title: "Erro ao salvar", description: error.message, variant: "destructive" });
-        setSaving(false);
-        return;
-      }
-    } else {
-      const { error } = await supabase.from("launches").insert({ ...launchData, created_by: user.id });
-      if (error) {
-        toast({ title: "Erro ao criar", description: error.message, variant: "destructive" });
-        setSaving(false);
-        return;
-      }
+    if (!name.trim()) {
+      toast({ title: "Nome obrigatorio", description: "Informe o nome do lancamento para continuar.", variant: "destructive" });
+      return;
     }
 
-    toast({ title: isEditing ? "Lancamento atualizado!" : "Lancamento criado!" });
-    setSaving(false);
-    onSaved();
+    if (!user) {
+      toast({
+        title: "Sessao indisponivel",
+        description: "Sua sessao nao foi reconhecida. Atualize a pagina e entre novamente antes de criar um lancamento.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      const baseSlug = slug.trim() || slugify(name);
+
+      if (!baseSlug) {
+        toast({
+          title: "Slug invalido",
+          description: "Use um nome com letras ou numeros para gerar o identificador do lancamento.",
+          variant: "destructive",
+        });
+        setSaving(false);
+        return;
+      }
+
+      const safeSlug = await resolveUniqueSlug(baseSlug);
+
+      const launchData = {
+        name: name.trim(),
+        slug: safeSlug,
+        status: "active",
+        custom_states: customStates as unknown as import("@/integrations/supabase/types").Json,
+        whatsapp_group_link: whatsappLink || null,
+      };
+
+      if (isEditing) {
+        const { error, data } = await supabase
+          .from("launches")
+          .update(launchData)
+          .eq("id", launchId)
+          .select("id")
+          .single();
+
+        if (error || !data) {
+          toast({
+            title: "Erro ao salvar",
+            description: error?.message || "O lancamento nao retornou confirmacao do backend.",
+            variant: "destructive",
+          });
+          setSaving(false);
+          return;
+        }
+      } else {
+        const { error, data } = await supabase
+          .from("launches")
+          .insert({ ...launchData, created_by: user.id })
+          .select("id")
+          .single();
+
+        if (error || !data) {
+          toast({
+            title: "Erro ao criar",
+            description: error?.message || "O backend nao confirmou a criacao do lancamento.",
+            variant: "destructive",
+          });
+          setSaving(false);
+          return;
+        }
+      }
+
+      if (safeSlug !== baseSlug) {
+        setSlug(safeSlug);
+        setSlugManual(true);
+        toast({
+          title: "Slug ajustado automaticamente",
+          description: `Ja existia um lancamento com esse identificador. Usamos "${safeSlug}" para evitar conflito.`,
+        });
+      }
+
+      toast({ title: isEditing ? "Lancamento atualizado!" : "Lancamento criado!" });
+      setSaving(false);
+      onSaved();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Falha inesperada ao salvar o lancamento.";
+      toast({ title: "Erro no lancamento", description: message, variant: "destructive" });
+      setSaving(false);
+    }
   };
 
   return (
