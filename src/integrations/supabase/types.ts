@@ -14,110 +14,6 @@ export type Database = {
   }
   public: {
     Tables: {
-      launches: {
-        Row: {
-          ac_api_key: string | null
-          ac_api_url: string | null
-          ac_default_list_id: string | null
-          ac_named_tags: Json
-          created_at: string
-          created_by: string
-          custom_states: Json
-          id: string
-          manychat_account_id: string | null
-          manychat_api_key: string | null
-          manychat_api_url: string | null
-          name: string
-          slug: string | null
-          status: string
-          whatsapp_group_link: string | null
-        }
-        Insert: {
-          ac_api_key?: string | null
-          ac_api_url?: string | null
-          ac_default_list_id?: string | null
-          ac_named_tags?: Json
-          created_at?: string
-          created_by: string
-          custom_states?: Json
-          id?: string
-          manychat_account_id?: string | null
-          manychat_api_key?: string | null
-          manychat_api_url?: string | null
-          name: string
-          slug?: string | null
-          status?: string
-          whatsapp_group_link?: string | null
-        }
-        Update: {
-          ac_api_key?: string | null
-          ac_api_url?: string | null
-          ac_default_list_id?: string | null
-          ac_named_tags?: Json
-          created_at?: string
-          created_by?: string
-          custom_states?: Json
-          id?: string
-          manychat_account_id?: string | null
-          manychat_api_key?: string | null
-          manychat_api_url?: string | null
-          name?: string
-          slug?: string | null
-          status?: string
-          whatsapp_group_link?: string | null
-        }
-        Relationships: []
-      }
-      launch_dedupe_settings: {
-        Row: {
-          auto_add_country_code: boolean
-          auto_add_ninth_digit: boolean
-          auto_merge_duplicates: boolean
-          compare_digits_only: boolean
-          created_at: string
-          default_country_code: string
-          launch_id: string
-          merge_on_exact_email: boolean
-          merge_on_exact_phone: boolean
-          prefer_most_complete_record: boolean
-          updated_at: string
-        }
-        Insert: {
-          auto_add_country_code?: boolean
-          auto_add_ninth_digit?: boolean
-          auto_merge_duplicates?: boolean
-          compare_digits_only?: boolean
-          created_at?: string
-          default_country_code?: string
-          launch_id: string
-          merge_on_exact_email?: boolean
-          merge_on_exact_phone?: boolean
-          prefer_most_complete_record?: boolean
-          updated_at?: string
-        }
-        Update: {
-          auto_add_country_code?: boolean
-          auto_add_ninth_digit?: boolean
-          auto_merge_duplicates?: boolean
-          compare_digits_only?: boolean
-          created_at?: string
-          default_country_code?: string
-          launch_id?: string
-          merge_on_exact_email?: boolean
-          merge_on_exact_phone?: boolean
-          prefer_most_complete_record?: boolean
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "launch_dedupe_settings_launch_id_fkey"
-            columns: ["launch_id"]
-            isOneToOne: true
-            referencedRelation: "launches"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       contact_processing_logs: {
         Row: {
           code: string
@@ -238,6 +134,110 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      launch_dedupe_settings: {
+        Row: {
+          auto_add_country_code: boolean
+          auto_add_ninth_digit: boolean
+          auto_merge_duplicates: boolean
+          compare_digits_only: boolean
+          created_at: string
+          default_country_code: string
+          launch_id: string
+          merge_on_exact_email: boolean
+          merge_on_exact_phone: boolean
+          prefer_most_complete_record: boolean
+          updated_at: string
+        }
+        Insert: {
+          auto_add_country_code?: boolean
+          auto_add_ninth_digit?: boolean
+          auto_merge_duplicates?: boolean
+          compare_digits_only?: boolean
+          created_at?: string
+          default_country_code?: string
+          launch_id: string
+          merge_on_exact_email?: boolean
+          merge_on_exact_phone?: boolean
+          prefer_most_complete_record?: boolean
+          updated_at?: string
+        }
+        Update: {
+          auto_add_country_code?: boolean
+          auto_add_ninth_digit?: boolean
+          auto_merge_duplicates?: boolean
+          compare_digits_only?: boolean
+          created_at?: string
+          default_country_code?: string
+          launch_id?: string
+          merge_on_exact_email?: boolean
+          merge_on_exact_phone?: boolean
+          prefer_most_complete_record?: boolean
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "launch_dedupe_settings_launch_id_fkey"
+            columns: ["launch_id"]
+            isOneToOne: true
+            referencedRelation: "launches"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      launches: {
+        Row: {
+          ac_api_key: string | null
+          ac_api_url: string | null
+          ac_default_list_id: string | null
+          ac_named_tags: Json
+          created_at: string
+          created_by: string
+          custom_states: Json
+          id: string
+          manychat_account_id: string | null
+          manychat_api_key: string | null
+          manychat_api_url: string | null
+          name: string
+          slug: string | null
+          status: string
+          whatsapp_group_link: string | null
+        }
+        Insert: {
+          ac_api_key?: string | null
+          ac_api_url?: string | null
+          ac_default_list_id?: string | null
+          ac_named_tags?: Json
+          created_at?: string
+          created_by: string
+          custom_states?: Json
+          id?: string
+          manychat_account_id?: string | null
+          manychat_api_key?: string | null
+          manychat_api_url?: string | null
+          name: string
+          slug?: string | null
+          status?: string
+          whatsapp_group_link?: string | null
+        }
+        Update: {
+          ac_api_key?: string | null
+          ac_api_url?: string | null
+          ac_default_list_id?: string | null
+          ac_named_tags?: Json
+          created_at?: string
+          created_by?: string
+          custom_states?: Json
+          id?: string
+          manychat_account_id?: string | null
+          manychat_api_key?: string | null
+          manychat_api_url?: string | null
+          name?: string
+          slug?: string | null
+          status?: string
+          whatsapp_group_link?: string | null
+        }
+        Relationships: []
       }
       lead_contact_identities: {
         Row: {
