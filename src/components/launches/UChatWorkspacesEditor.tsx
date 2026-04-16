@@ -1,9 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Plus, Trash2 } from "lucide-react";
-import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
-} from "@/components/ui/table";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 interface UChatWorkspace {
   id?: string;
@@ -41,40 +39,46 @@ export function UChatWorkspacesEditor({ workspaces, onChange }: Props) {
   return (
     <div className="space-y-3">
       {workspaces.length > 0 && (
-        <div className="rounded-lg border overflow-x-auto">
+        <div className="overflow-x-auto rounded-lg border">
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Nome</TableHead>
+                <TableHead>Nome (opcional)</TableHead>
                 <TableHead>Workspace ID</TableHead>
-                <TableHead>Bot ID</TableHead>
                 <TableHead>API Token</TableHead>
-                <TableHead>Máx. subs</TableHead>
-                <TableHead>Atual</TableHead>
                 <TableHead className="w-10"></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {workspaces.map((w, i) => (
-                <TableRow key={i}>
+              {workspaces.map((workspace, index) => (
+                <TableRow key={workspace.id || index}>
                   <TableCell>
-                    <Input value={w.workspace_name} onChange={(e) => update(i, "workspace_name", e.target.value)} placeholder="Nome" className="min-w-[120px]" />
+                    <Input
+                      value={workspace.workspace_name}
+                      onChange={(event) => update(index, "workspace_name", event.target.value)}
+                      placeholder="Ex: Libras Principal"
+                      className="min-w-[170px]"
+                    />
                   </TableCell>
                   <TableCell>
-                    <Input value={w.workspace_id} onChange={(e) => update(i, "workspace_id", e.target.value)} placeholder="ID" className="min-w-[100px]" />
+                    <Input
+                      value={workspace.workspace_id}
+                      onChange={(event) => update(index, "workspace_id", event.target.value)}
+                      placeholder="ID do workspace"
+                      className="min-w-[150px]"
+                    />
                   </TableCell>
                   <TableCell>
-                    <Input value={w.bot_id} onChange={(e) => update(i, "bot_id", e.target.value)} placeholder="Bot ID" className="min-w-[100px]" />
+                    <Input
+                      type="password"
+                      value={workspace.api_token}
+                      onChange={(event) => update(index, "api_token", event.target.value)}
+                      placeholder="Cole o token da API"
+                      className="min-w-[230px]"
+                    />
                   </TableCell>
                   <TableCell>
-                    <Input type="password" value={w.api_token} onChange={(e) => update(i, "api_token", e.target.value)} placeholder="Token" className="min-w-[100px]" />
-                  </TableCell>
-                  <TableCell>
-                    <Input type="number" value={w.max_subscribers} onChange={(e) => update(i, "max_subscribers", parseInt(e.target.value) || 0)} className="w-20" />
-                  </TableCell>
-                  <TableCell className="text-muted-foreground text-center">{w.current_count}</TableCell>
-                  <TableCell>
-                    <Button type="button" variant="ghost" size="icon" onClick={() => remove(i)}>
+                    <Button type="button" variant="ghost" size="icon" onClick={() => remove(index)}>
                       <Trash2 className="h-4 w-4 text-destructive" />
                     </Button>
                   </TableCell>
@@ -84,8 +88,14 @@ export function UChatWorkspacesEditor({ workspaces, onChange }: Props) {
           </Table>
         </div>
       )}
+
+      <p className="text-sm text-muted-foreground">
+        Para importar do UChat, usamos somente o <span className="font-medium text-foreground">Workspace ID</span> e o{" "}
+        <span className="font-medium text-foreground">API Token</span>. O restante dos campos internos e preenchido automaticamente.
+      </p>
+
       <Button type="button" variant="outline" size="sm" onClick={addWorkspace}>
-        <Plus className="h-4 w-4 mr-1" /> Adicionar workspace
+        <Plus className="mr-1 h-4 w-4" /> Adicionar workspace
       </Button>
     </div>
   );

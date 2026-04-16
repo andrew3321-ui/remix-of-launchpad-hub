@@ -61,6 +61,38 @@ const emptyUChatWorkspace: UChatWorkspace = {
   current_count: 0,
 };
 
+const pendingSyncMaxAgeMs = 1000 * 60 * 30;
+
+function pendingSyncStorageKey(launchId: string, source: SyncSource) {
+  return `megafone-sync-pending:${launchId}:${source}`;
+}
+
+function markPendingSync(launchId: string, source: SyncSource) {
+  localStorage.setItem(pendingSyncStorageKey(launchId, source), JSON.stringify({ startedAt: Date.now() }));
+}
+
+function clearPendingSync(launchId: string, source: SyncSource) {
+  localStorage.removeItem(pendingSyncStorageKey(launchId, source));
+}
+
+function hasPendingSync(launchId: string, source: SyncSource) {
+  const rawValue = localStorage.getItem(pendingSyncStorageKey(launchId, source));
+  if (!rawValue) return false;
+
+  try {
+    const parsed = JSON.parse(rawValue) as { startedAt?: number };
+    if (!parsed.startedAt || Date.now() - parsed.startedAt > pendingSyncMaxAgeMs) {
+      clearPendingSync(launchId, source);
+      return false;
+    }
+
+    return true;
+  } catch {
+    clearPendingSync(launchId, source);
+    return false;
+  }
+}
+
 function ConnectionBadge({ connected }: { connected: boolean }) {
   return (
     <Badge variant={connected ? "default" : "secondary"}>
@@ -91,7 +123,10 @@ export default function Sources() {
 
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState<"activecampaign" | "manychat" | "uchat" | null>(null);
-  const [syncing, setSyncing] = useState<SyncSource | null>(null);
+  const [syncingState, setSyncingState] = useState<Record<SyncSource, boolean>>({
+    activecampaign: false,
+    uchat: false,
+  });
 
   const [acApiUrl, setAcApiUrl] = useState("");
   const [acApiKey, setAcApiKey] = useState("");
@@ -105,7 +140,7 @@ export default function Sources() {
   const [uchatWorkspaces, setUchatWorkspaces] = useState<UChatWorkspace[]>([]);
   const [syncRuns, setSyncRuns] = useState<SyncRunRow[]>([]);
 
-  const loadSyncRuns = async (launchId: string) => {
+  const loadSyncRuns = async (launchId: string, silent = false) => {
     const { data, error } = await supabase
       .from("platform_sync_runs")
       .select(
@@ -116,12 +151,38 @@ export default function Sources() {
       .limit(12);
 
     if (error) {
-      toast({ title: "Erro ao carregar sincronizacoes", description: error.message, variant: "destructive" });
+      if (!silent) {
+        toast({ title: "Erro ao carregar sincronizacoes", description: error.message, variant: "destructive" });
+      }
       setSyncRuns([]);
-      return;
+      return [] as SyncRunRow[];
     }
 
-    setSyncRuns((data || []) as SyncRunRow[]);
+    const rows = (data || []) as SyncRunRow[];
+    setSyncRuns(rows);
+
+    const nextSyncingState: Record<SyncSource, boolean> = {
+      activecampaign: false,
+      uchat: false,
+    };
+
+    (["activecampaign", "uchat"] as SyncSource[]).forEach((source) => {
+      const latestRun = rows.find((run) => run.source === source) || null;
+      if (latestRun?.status === "running") {
+        nextSyncingState[source] = true;
+        markPendingSync(launchId, source);
+        return;
+      }
+
+      if (latestRun?.status === "completed" || latestRun?.status === "failed") {
+        clearPendingSync(launchId, source);
+      }
+
+      nextSyncingState[source] = hasPendingSync(launchId, source);
+    });
+
+    setSyncingState(nextSyncingState);
+    return rows;
   };
 
   useEffect(() => {
@@ -137,6 +198,7 @@ export default function Sources() {
         setManychatAccountId("");
         setUchatWorkspaces([]);
         setSyncRuns([]);
+        setSyncingState({ activecampaign: false, uchat: false });
         return;
       }
 
@@ -145,30 +207,20 @@ export default function Sources() {
       const [
         { data: launchData, error: launchError },
         { data: workspaceData, error: workspaceError },
-        { data: syncData, error: syncError },
-      ] =
-        await Promise.all([
-          supabase
-            .from("launches")
-            .select(
-              "ac_api_url, ac_api_key, ac_default_list_id, ac_named_tags, manychat_api_url, manychat_api_key, manychat_account_id",
-            )
-            .eq("id", activeLaunch.id)
-            .single(),
-          supabase
-            .from("uchat_workspaces")
-            .select("*")
-            .eq("launch_id", activeLaunch.id)
-            .order("created_at", { ascending: true }),
-          supabase
-            .from("platform_sync_runs")
-            .select(
-              "id, source, status, processed_count, created_count, merged_count, error_count, skipped_count, started_at, finished_at, last_error, metadata",
-            )
-            .eq("launch_id", activeLaunch.id)
-            .order("started_at", { ascending: false })
-            .limit(12),
-        ]);
+      ] = await Promise.all([
+        supabase
+          .from("launches")
+          .select(
+            "ac_api_url, ac_api_key, ac_default_list_id, ac_named_tags, manychat_api_url, manychat_api_key, manychat_account_id",
+          )
+          .eq("id", activeLaunch.id)
+          .single(),
+        supabase
+          .from("uchat_workspaces")
+          .select("*")
+          .eq("launch_id", activeLaunch.id)
+          .order("created_at", { ascending: true }),
+      ]);
 
       if (launchError) {
         toast({ title: "Erro ao carregar fontes", description: launchError.message, variant: "destructive" });
@@ -176,10 +228,6 @@ export default function Sources() {
 
       if (workspaceError) {
         toast({ title: "Erro ao carregar UChat", description: workspaceError.message, variant: "destructive" });
-      }
-
-      if (syncError) {
-        toast({ title: "Erro ao carregar syncs", description: syncError.message, variant: "destructive" });
       }
 
       setAcApiUrl(launchData?.ac_api_url ?? "");
@@ -196,22 +244,37 @@ export default function Sources() {
           id: workspace.id,
           workspace_name: workspace.workspace_name,
           workspace_id: workspace.workspace_id,
-          bot_id: workspace.bot_id,
+          bot_id: workspace.bot_id || workspace.workspace_id,
           api_token: workspace.api_token,
           max_subscribers: workspace.max_subscribers,
           current_count: workspace.current_count,
         })) ?? [],
       );
-      setSyncRuns((syncData || []) as SyncRunRow[]);
 
+      await loadSyncRuns(activeLaunch.id, true);
       setLoading(false);
     };
 
-    load();
+    void load();
   }, [activeLaunch, toast]);
 
-  const saveActiveCampaign = async () => {
+  useEffect(() => {
     if (!activeLaunch) return;
+
+    const hasOngoingSync =
+      syncingState.activecampaign || syncingState.uchat || syncRuns.some((run) => run.status === "running");
+
+    if (!hasOngoingSync) return;
+
+    const intervalId = window.setInterval(() => {
+      void loadSyncRuns(activeLaunch.id, true);
+    }, 4000);
+
+    return () => window.clearInterval(intervalId);
+  }, [activeLaunch, syncingState, syncRuns]);
+
+  const saveActiveCampaign = async ({ silent = false }: { silent?: boolean } = {}) => {
+    if (!activeLaunch) return false;
 
     setSaving("activecampaign");
     const { error } = await supabase
@@ -225,11 +288,18 @@ export default function Sources() {
       .eq("id", activeLaunch.id);
 
     if (error) {
-      toast({ title: "Erro ao salvar ActiveCampaign", description: error.message, variant: "destructive" });
-    } else {
+      if (!silent) {
+        toast({ title: "Erro ao salvar ActiveCampaign", description: error.message, variant: "destructive" });
+      }
+      setSaving(null);
+      return false;
+    }
+
+    if (!silent) {
       toast({ title: "ActiveCampaign atualizado" });
     }
     setSaving(null);
+    return true;
   };
 
   const saveManyChat = async () => {
@@ -253,49 +323,72 @@ export default function Sources() {
     setSaving(null);
   };
 
-  const saveUChat = async () => {
-    if (!activeLaunch) return;
+  const saveUChat = async ({ silent = false }: { silent?: boolean } = {}) => {
+    if (!activeLaunch) return false;
 
     setSaving("uchat");
 
     const { error: deleteError } = await supabase.from("uchat_workspaces").delete().eq("launch_id", activeLaunch.id);
 
     if (deleteError) {
-      toast({ title: "Erro ao limpar workspaces antigos", description: deleteError.message, variant: "destructive" });
+      if (!silent) {
+        toast({ title: "Erro ao limpar workspaces antigos", description: deleteError.message, variant: "destructive" });
+      }
       setSaving(null);
-      return;
+      return false;
     }
 
     const rows = uchatWorkspaces
-      .filter((workspace) => workspace.workspace_name.trim() && workspace.workspace_id.trim() && workspace.bot_id.trim())
+      .filter((workspace) => workspace.workspace_id.trim() && workspace.api_token.trim())
       .map((workspace) => ({
         launch_id: activeLaunch.id,
-        workspace_name: workspace.workspace_name,
-        workspace_id: workspace.workspace_id,
-        bot_id: workspace.bot_id,
-        api_token: workspace.api_token,
-        max_subscribers: workspace.max_subscribers,
+        workspace_name: workspace.workspace_name.trim() || `Workspace ${workspace.workspace_id.trim()}`,
+        workspace_id: workspace.workspace_id.trim(),
+        bot_id: workspace.bot_id.trim() || workspace.workspace_id.trim(),
+        api_token: workspace.api_token.trim(),
+        max_subscribers: workspace.max_subscribers || 1000,
         current_count: workspace.current_count,
       }));
 
     if (rows.length > 0) {
-      const { error: insertError } = await supabase.from("uchat_workspaces").insert(rows);
+      const { data: insertedRows, error: insertError } = await supabase
+        .from("uchat_workspaces")
+        .insert(rows)
+        .select("*");
+
       if (insertError) {
-        toast({ title: "Erro ao salvar UChat", description: insertError.message, variant: "destructive" });
+        if (!silent) {
+          toast({ title: "Erro ao salvar UChat", description: insertError.message, variant: "destructive" });
+        }
         setSaving(null);
-        return;
+        return false;
       }
+
+      setUchatWorkspaces(
+        (insertedRows || []).map((workspace) => ({
+          id: workspace.id,
+          workspace_name: workspace.workspace_name,
+          workspace_id: workspace.workspace_id,
+          bot_id: workspace.bot_id,
+          api_token: workspace.api_token,
+          max_subscribers: workspace.max_subscribers,
+          current_count: workspace.current_count,
+        })),
+      );
+    } else {
+      setUchatWorkspaces([emptyUChatWorkspace]);
     }
 
-    toast({ title: "UChat atualizado" });
+    if (!silent) {
+      toast({ title: "UChat atualizado" });
+    }
     setSaving(null);
+    return true;
   };
 
   const activeCampaignConnected = Boolean(acApiUrl.trim() && acApiKey.trim());
   const manyChatConnected = Boolean(manychatApiUrl.trim() && manychatApiKey.trim());
-  const uchatConnected = uchatWorkspaces.some(
-    (workspace) => workspace.workspace_name.trim() && workspace.workspace_id.trim() && workspace.bot_id.trim(),
-  );
+  const uchatConnected = uchatWorkspaces.some((workspace) => workspace.workspace_id.trim() && workspace.api_token.trim());
 
   const latestActiveCampaignRun = useMemo(
     () => syncRuns.find((run) => run.source === "activecampaign") || null,
@@ -321,13 +414,22 @@ export default function Sources() {
     if (source === "uchat" && !uchatConnected) {
       toast({
         title: "Configure o UChat antes",
-        description: "Cadastre ao menos um workspace valido do UChat antes de importar subscribers.",
+        description: "Preencha ao menos o Workspace ID e o API Token antes de importar os subscribers.",
         variant: "destructive",
       });
       return;
     }
 
-    setSyncing(source);
+    const saveSucceeded =
+      source === "activecampaign"
+        ? await saveActiveCampaign({ silent: true })
+        : await saveUChat({ silent: true });
+
+    if (!saveSucceeded) return;
+
+    setSyncingState((current) => ({ ...current, [source]: true }));
+    markPendingSync(activeLaunch.id, source);
+    const requestStartedAt = Date.now();
 
     try {
       const { data, error } = await supabase.functions.invoke("sync-platform-contacts", {
@@ -338,9 +440,31 @@ export default function Sources() {
       });
 
       if (error) {
+        const refreshedRuns = await loadSyncRuns(activeLaunch.id, true);
+        const latestRun =
+          refreshedRuns.find(
+            (run) => run.source === source && new Date(run.started_at).getTime() >= requestStartedAt - 15000,
+          ) || null;
+
+        if (latestRun?.status === "running") {
+          toast({
+            title: source === "activecampaign" ? "Importacao do ActiveCampaign em andamento" : "Importacao do UChat em andamento",
+            description: "A rodada foi aberta no backend. Acompanhe a fila e os logs enquanto o processamento continua.",
+          });
+          return;
+        }
+
+        if (latestRun?.status === "completed") {
+          toast({
+            title: source === "activecampaign" ? "Importacao do ActiveCampaign concluida" : "Importacao do UChat concluida",
+            description: `Novos: ${latestRun.created_count} | Mesclados: ${latestRun.merged_count} | Ignorados: ${latestRun.skipped_count} | Erros: ${latestRun.error_count}`,
+          });
+          return;
+        }
+
         toast({
           title: `Erro ao importar ${source === "activecampaign" ? "ActiveCampaign" : "UChat"}`,
-          description: error.message,
+          description: latestRun?.last_error || error.message,
           variant: "destructive",
         });
         return;
@@ -359,9 +483,37 @@ export default function Sources() {
         title: source === "activecampaign" ? "Importacao do ActiveCampaign concluida" : "Importacao do UChat concluida",
         description: `Novos: ${summary.counters?.createdCount ?? 0} | Mesclados: ${summary.counters?.mergedCount ?? 0} | Ignorados: ${summary.counters?.skippedCount ?? 0} | Erros: ${summary.counters?.errorCount ?? 0}`,
       });
+    } catch (error) {
+      const refreshedRuns = await loadSyncRuns(activeLaunch.id, true);
+      const latestRun =
+        refreshedRuns.find(
+          (run) => run.source === source && new Date(run.started_at).getTime() >= requestStartedAt - 15000,
+        ) || null;
+
+      if (latestRun?.status === "running") {
+        toast({
+          title: source === "activecampaign" ? "Importacao do ActiveCampaign em andamento" : "Importacao do UChat em andamento",
+          description: "A rodada foi aberta no backend. Acompanhe a fila e os logs enquanto o processamento continua.",
+        });
+        return;
+      }
+
+      if (latestRun?.status === "completed") {
+        toast({
+          title: source === "activecampaign" ? "Importacao do ActiveCampaign concluida" : "Importacao do UChat concluida",
+          description: `Novos: ${latestRun.created_count} | Mesclados: ${latestRun.merged_count} | Ignorados: ${latestRun.skipped_count} | Erros: ${latestRun.error_count}`,
+        });
+        return;
+      }
+
+      const message = error instanceof Error ? error.message : "Falha inesperada ao iniciar a importacao.";
+      toast({
+        title: `Erro ao importar ${source === "activecampaign" ? "ActiveCampaign" : "UChat"}`,
+        description: latestRun?.last_error || message,
+        variant: "destructive",
+      });
     } finally {
-      setSyncing(null);
-      await loadSyncRuns(activeLaunch.id);
+      await loadSyncRuns(activeLaunch.id, true);
     }
   };
 
@@ -495,11 +647,17 @@ export default function Sources() {
               </div>
             </CardContent>
             <CardFooter className="flex flex-wrap justify-end gap-3">
-              <Button onClick={() => triggerSync("activecampaign")} disabled={saving !== null || syncing !== null}>
-                {syncing === "activecampaign" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <DownloadCloud className="mr-2 h-4 w-4" />}
+              <Button
+                onClick={() => void triggerSync("activecampaign")}
+                disabled={saving !== null || syncingState.activecampaign || syncingState.uchat}
+              >
+                {syncingState.activecampaign ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <DownloadCloud className="mr-2 h-4 w-4" />}
                 Importar contatos, listas e tags
               </Button>
-              <Button onClick={saveActiveCampaign} disabled={saving !== null || syncing !== null}>
+              <Button
+                onClick={() => void saveActiveCampaign()}
+                disabled={saving !== null || syncingState.activecampaign || syncingState.uchat}
+              >
                 {saving === "activecampaign" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 Salvar ActiveCampaign
               </Button>
@@ -557,7 +715,7 @@ export default function Sources() {
               <div className="space-y-1.5">
                 <CardTitle className="text-xl">UChat</CardTitle>
                 <CardDescription>
-                  Cadastre um ou mais workspaces e importe quem ja esta nos bots para unificar com a base principal.
+                  Informe o Workspace ID e o API Token. O restante da configuracao tecnica e preenchido automaticamente.
                 </CardDescription>
               </div>
               <ConnectionBadge connected={uchatConnected} />
@@ -589,11 +747,17 @@ export default function Sources() {
               </div>
             </CardContent>
             <CardFooter className="flex flex-wrap justify-end gap-3">
-              <Button onClick={() => triggerSync("uchat")} disabled={saving !== null || syncing !== null}>
-                {syncing === "uchat" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <DownloadCloud className="mr-2 h-4 w-4" />}
+              <Button
+                onClick={() => void triggerSync("uchat")}
+                disabled={saving !== null || syncingState.activecampaign || syncingState.uchat}
+              >
+                {syncingState.uchat ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <DownloadCloud className="mr-2 h-4 w-4" />}
                 Importar subscribers do UChat
               </Button>
-              <Button onClick={saveUChat} disabled={saving !== null || syncing !== null}>
+              <Button
+                onClick={() => void saveUChat()}
+                disabled={saving !== null || syncingState.activecampaign || syncingState.uchat}
+              >
                 {saving === "uchat" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 Salvar UChat
               </Button>

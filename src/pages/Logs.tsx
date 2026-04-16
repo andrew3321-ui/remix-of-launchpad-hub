@@ -61,14 +61,21 @@ export default function Logs() {
   const [search, setSearch] = useState("");
 
   useEffect(() => {
-    const load = async () => {
+    let mounted = true;
+
+    const load = async (silent = false) => {
       if (!activeLaunch) {
-        setRows([]);
-        setLoading(false);
+        if (mounted) {
+          setRows([]);
+          setLoading(false);
+        }
         return;
       }
 
-      setLoading(true);
+      if (!silent && mounted) {
+        setLoading(true);
+      }
+
       const { data, error } = await supabase
         .from("contact_processing_logs")
         .select("id, code, created_at, details, level, message, source, title")
@@ -77,16 +84,32 @@ export default function Logs() {
         .limit(100);
 
       if (error) {
-        toast({ title: "Erro ao carregar logs", description: error.message, variant: "destructive" });
-        setLoading(false);
+        if (!silent) {
+          toast({ title: "Erro ao carregar logs", description: error.message, variant: "destructive" });
+        }
+
+        if (mounted) {
+          setLoading(false);
+        }
         return;
       }
 
-      setRows((data || []) as ProcessingLogRow[]);
-      setLoading(false);
+      if (mounted) {
+        setRows((data || []) as ProcessingLogRow[]);
+        setLoading(false);
+      }
     };
 
-    load();
+    void load();
+
+    const intervalId = window.setInterval(() => {
+      void load(true);
+    }, 4000);
+
+    return () => {
+      mounted = false;
+      window.clearInterval(intervalId);
+    };
   }, [activeLaunch, toast]);
 
   const filteredRows = useMemo(() => {
@@ -202,7 +225,7 @@ export default function Logs() {
       ) : filteredRows.length === 0 ? (
         <Card>
           <CardContent className="py-10 text-sm text-muted-foreground">
-            Nenhum log encontrado para os filtros atuais. Quando o backend começar a ingerir contatos, eventos como numero invalido, merge de duplicata e importacao aparecerao aqui.
+            Nenhum log encontrado para os filtros atuais. Quando o backend comecar a ingerir contatos, eventos como numero invalido, merge de duplicata e importacao aparecerao aqui.
           </CardContent>
         </Card>
       ) : (
@@ -230,7 +253,7 @@ export default function Logs() {
 
                 {row.details && Object.keys(row.details).length > 0 && (
                   <div className="rounded-lg border bg-muted/30 p-3">
-                    <pre className="overflow-x-auto text-xs whitespace-pre-wrap">
+                    <pre className="overflow-x-auto whitespace-pre-wrap text-xs">
                       {JSON.stringify(row.details, null, 2)}
                     </pre>
                   </div>

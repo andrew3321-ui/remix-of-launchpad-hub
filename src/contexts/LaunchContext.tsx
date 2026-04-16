@@ -28,12 +28,25 @@ const LaunchContext = createContext<LaunchContextType>({
 
 export const useLaunch = () => useContext(LaunchContext);
 
+const ACTIVE_LAUNCH_STORAGE_KEY = "megafone-active-launch-id";
+
 export function LaunchProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
   const { toast } = useToast();
   const [launches, setLaunches] = useState<Launch[]>([]);
-  const [activeLaunch, setActiveLaunch] = useState<Launch | null>(null);
+  const [activeLaunch, setActiveLaunchState] = useState<Launch | null>(null);
   const [loading, setLoading] = useState(true);
+
+  const setActiveLaunch = useCallback((launch: Launch | null) => {
+    setActiveLaunchState(launch);
+
+    if (launch?.id) {
+      localStorage.setItem(ACTIVE_LAUNCH_STORAGE_KEY, launch.id);
+      return;
+    }
+
+    localStorage.removeItem(ACTIVE_LAUNCH_STORAGE_KEY);
+  }, []);
 
   const fetchLaunches = useCallback(async () => {
     if (!user) {
@@ -62,15 +75,21 @@ export function LaunchProvider({ children }: { children: ReactNode }) {
 
     if (data) {
       setLaunches(data);
-      setActiveLaunch((prev) => {
-        if (prev && data.find((l) => l.id === prev.id)) {
-          return data.find((l) => l.id === prev.id)!;
+      const storedLaunchId = localStorage.getItem(ACTIVE_LAUNCH_STORAGE_KEY);
+
+      setActiveLaunchState((prev) => {
+        const preferredId = prev?.id || storedLaunchId;
+
+        if (preferredId) {
+          const matchingLaunch = data.find((launch) => launch.id === preferredId);
+          if (matchingLaunch) return matchingLaunch;
         }
+
         return data.length > 0 ? data[0] : null;
       });
     }
     setLoading(false);
-  }, [toast, user]);
+  }, [setActiveLaunch, toast, user]);
 
   useEffect(() => {
     fetchLaunches();
