@@ -195,7 +195,7 @@ async function mapWithConcurrency<T>(
 }
 
 async function insertProcessingLog(
-  supabase: ReturnType<typeof createClient>,
+  supabase: AnySupabaseClient,
   launchId: string,
   source: SyncSource,
   level: "info" | "warning" | "error" | "success",
@@ -216,7 +216,7 @@ async function insertProcessingLog(
 }
 
 async function createSyncRun(
-  supabase: ReturnType<typeof createClient>,
+  supabase: AnySupabaseClient,
   launchId: string,
   source: SyncSource,
   metadata: JsonRecord,
@@ -240,7 +240,7 @@ async function createSyncRun(
 }
 
 async function completeSyncRun(
-  supabase: ReturnType<typeof createClient>,
+  supabase: AnySupabaseClient,
   runId: string,
   status: "completed" | "failed",
   counters: SyncCounters,
@@ -264,7 +264,7 @@ async function completeSyncRun(
 }
 
 async function resolveLaunch(
-  supabase: ReturnType<typeof createClient>,
+  supabase: AnySupabaseClient,
   body: SyncRequestBody,
 ) {
   const launchLookup = body.launchId
@@ -288,7 +288,7 @@ async function resolveLaunch(
 }
 
 async function fetchUchatWorkspaces(
-  supabase: ReturnType<typeof createClient>,
+  supabase: AnySupabaseClient,
   launchId: string,
 ) {
   const { data, error } = await supabase
@@ -389,7 +389,7 @@ async function fetchActiveCampaignContactSnapshot(
 }
 
 async function processPlatformContact(
-  supabase: ReturnType<typeof createClient>,
+  supabase: AnySupabaseClient,
   counters: SyncCounters,
   sampleErrors: string[],
   body: IncomingEventBody,
@@ -414,7 +414,7 @@ async function processPlatformContact(
 }
 
 async function syncActiveCampaignContacts(
-  supabase: ReturnType<typeof createClient>,
+  supabase: AnySupabaseClient,
   launch: LaunchRow,
   counters: SyncCounters,
   sampleErrors: string[],
@@ -535,7 +535,7 @@ async function syncActiveCampaignContacts(
 }
 
 async function syncUchatContacts(
-  supabase: ReturnType<typeof createClient>,
+  supabase: AnySupabaseClient,
   launch: LaunchRow,
   counters: SyncCounters,
   sampleErrors: string[],
