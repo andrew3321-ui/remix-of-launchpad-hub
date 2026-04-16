@@ -276,7 +276,7 @@ async function resolveLaunch(
     : supabase
         .from("launches")
         .select("id, slug, name, ac_api_url, ac_api_key, ac_default_list_id")
-        .eq("slug", body.launchSlug)
+        .eq("slug", body.launchSlug as string)
         .maybeSingle();
 
   const { data: launch, error } = await launchLookup;
