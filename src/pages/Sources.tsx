@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -18,7 +18,7 @@ import { UChatWorkspacesEditor } from "@/components/launches/UChatWorkspacesEdit
 import { useLaunch } from "@/contexts/LaunchContext";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
-import { Loader2, Radio, ShieldCheck } from "lucide-react";
+import { DownloadCloud, Loader2, Radio, ShieldCheck } from "lucide-react";
 
 interface NamedTag {
   alias: string;
@@ -33,6 +33,23 @@ interface UChatWorkspace {
   api_token: string;
   max_subscribers: number;
   current_count: number;
+}
+
+type SyncSource = "activecampaign" | "uchat";
+
+interface SyncRunRow {
+  id: string;
+  source: SyncSource;
+  status: "running" | "completed" | "failed";
+  processed_count: number;
+  created_count: number;
+  merged_count: number;
+  error_count: number;
+  skipped_count: number;
+  started_at: string;
+  finished_at: string | null;
+  last_error: string | null;
+  metadata: Record<string, unknown> | null;
 }
 
 const emptyUChatWorkspace: UChatWorkspace = {
@@ -52,12 +69,29 @@ function ConnectionBadge({ connected }: { connected: boolean }) {
   );
 }
 
+function SyncRunBadge({ run }: { run: SyncRunRow | null }) {
+  if (!run) {
+    return <Badge variant="outline">Nenhuma importacao ainda</Badge>;
+  }
+
+  if (run.status === "failed") {
+    return <Badge variant="destructive">Falhou</Badge>;
+  }
+
+  if (run.status === "running") {
+    return <Badge variant="secondary">Em andamento</Badge>;
+  }
+
+  return <Badge variant="default">Concluida</Badge>;
+}
+
 export default function Sources() {
   const { activeLaunch } = useLaunch();
   const { toast } = useToast();
 
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState<"activecampaign" | "manychat" | "uchat" | null>(null);
+  const [syncing, setSyncing] = useState<SyncSource | null>(null);
 
   const [acApiUrl, setAcApiUrl] = useState("");
   const [acApiKey, setAcApiKey] = useState("");
@@ -69,6 +103,26 @@ export default function Sources() {
   const [manychatAccountId, setManychatAccountId] = useState("");
 
   const [uchatWorkspaces, setUchatWorkspaces] = useState<UChatWorkspace[]>([]);
+  const [syncRuns, setSyncRuns] = useState<SyncRunRow[]>([]);
+
+  const loadSyncRuns = async (launchId: string) => {
+    const { data, error } = await supabase
+      .from("platform_sync_runs")
+      .select(
+        "id, source, status, processed_count, created_count, merged_count, error_count, skipped_count, started_at, finished_at, last_error, metadata",
+      )
+      .eq("launch_id", launchId)
+      .order("started_at", { ascending: false })
+      .limit(12);
+
+    if (error) {
+      toast({ title: "Erro ao carregar sincronizacoes", description: error.message, variant: "destructive" });
+      setSyncRuns([]);
+      return;
+    }
+
+    setSyncRuns((data || []) as SyncRunRow[]);
+  };
 
   useEffect(() => {
     const load = async () => {
@@ -82,12 +136,17 @@ export default function Sources() {
         setManychatApiKey("");
         setManychatAccountId("");
         setUchatWorkspaces([]);
+        setSyncRuns([]);
         return;
       }
 
       setLoading(true);
 
-      const [{ data: launchData, error: launchError }, { data: workspaceData, error: workspaceError }] =
+      const [
+        { data: launchData, error: launchError },
+        { data: workspaceData, error: workspaceError },
+        { data: syncData, error: syncError },
+      ] =
         await Promise.all([
           supabase
             .from("launches")
@@ -101,6 +160,14 @@ export default function Sources() {
             .select("*")
             .eq("launch_id", activeLaunch.id)
             .order("created_at", { ascending: true }),
+          supabase
+            .from("platform_sync_runs")
+            .select(
+              "id, source, status, processed_count, created_count, merged_count, error_count, skipped_count, started_at, finished_at, last_error, metadata",
+            )
+            .eq("launch_id", activeLaunch.id)
+            .order("started_at", { ascending: false })
+            .limit(12),
         ]);
 
       if (launchError) {
@@ -109,6 +176,10 @@ export default function Sources() {
 
       if (workspaceError) {
         toast({ title: "Erro ao carregar UChat", description: workspaceError.message, variant: "destructive" });
+      }
+
+      if (syncError) {
+        toast({ title: "Erro ao carregar syncs", description: syncError.message, variant: "destructive" });
       }
 
       setAcApiUrl(launchData?.ac_api_url ?? "");
@@ -131,6 +202,7 @@ export default function Sources() {
           current_count: workspace.current_count,
         })) ?? [],
       );
+      setSyncRuns((syncData || []) as SyncRunRow[]);
 
       setLoading(false);
     };
@@ -225,6 +297,74 @@ export default function Sources() {
     (workspace) => workspace.workspace_name.trim() && workspace.workspace_id.trim() && workspace.bot_id.trim(),
   );
 
+  const latestActiveCampaignRun = useMemo(
+    () => syncRuns.find((run) => run.source === "activecampaign") || null,
+    [syncRuns],
+  );
+  const latestUchatRun = useMemo(
+    () => syncRuns.find((run) => run.source === "uchat") || null,
+    [syncRuns],
+  );
+
+  const triggerSync = async (source: SyncSource) => {
+    if (!activeLaunch) return;
+
+    if (source === "activecampaign" && !activeCampaignConnected) {
+      toast({
+        title: "Configure o ActiveCampaign antes",
+        description: "Preencha API URL e API Key do ActiveCampaign antes de importar a base.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (source === "uchat" && !uchatConnected) {
+      toast({
+        title: "Configure o UChat antes",
+        description: "Cadastre ao menos um workspace valido do UChat antes de importar subscribers.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setSyncing(source);
+
+    try {
+      const { data, error } = await supabase.functions.invoke("sync-platform-contacts", {
+        body: {
+          launchId: activeLaunch.id,
+          source,
+        },
+      });
+
+      if (error) {
+        toast({
+          title: `Erro ao importar ${source === "activecampaign" ? "ActiveCampaign" : "UChat"}`,
+          description: error.message,
+          variant: "destructive",
+        });
+        return;
+      }
+
+      const summary = data as {
+        counters?: {
+          createdCount?: number;
+          mergedCount?: number;
+          skippedCount?: number;
+          errorCount?: number;
+        };
+      };
+
+      toast({
+        title: source === "activecampaign" ? "Importacao do ActiveCampaign concluida" : "Importacao do UChat concluida",
+        description: `Novos: ${summary.counters?.createdCount ?? 0} | Mesclados: ${summary.counters?.mergedCount ?? 0} | Ignorados: ${summary.counters?.skippedCount ?? 0} | Erros: ${summary.counters?.errorCount ?? 0}`,
+      });
+    } finally {
+      setSyncing(null);
+      await loadSyncRuns(activeLaunch.id);
+    }
+  };
+
   if (!activeLaunch) {
     return (
       <div className="space-y-6">
@@ -291,7 +431,9 @@ export default function Sources() {
             <CardHeader className="flex flex-row items-start justify-between space-y-0">
               <div className="space-y-1.5">
                 <CardTitle className="text-xl">ActiveCampaign</CardTitle>
-                <CardDescription>Conecte a conta principal e mapeie tags internas do lancamento.</CardDescription>
+                <CardDescription>
+                  Base principal do lancamento. Importa contatos, listas e tags para o hub antes do tratamento automatico.
+                </CardDescription>
               </div>
               <ConnectionBadge connected={activeCampaignConnected} />
             </CardHeader>
@@ -328,9 +470,36 @@ export default function Sources() {
                 <Label>Tags nomeadas</Label>
                 <NamedTagsEditor tags={acNamedTags} onChange={setAcNamedTags} />
               </div>
+              <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-medium text-foreground">Ultima importacao</span>
+                  <SyncRunBadge run={latestActiveCampaignRun} />
+                </div>
+                {latestActiveCampaignRun ? (
+                  <div className="mt-3 space-y-1">
+                    <p>
+                      Processados: {latestActiveCampaignRun.processed_count} | Novos: {latestActiveCampaignRun.created_count} | Mesclados:{" "}
+                      {latestActiveCampaignRun.merged_count}
+                    </p>
+                    <p>
+                      Ignorados: {latestActiveCampaignRun.skipped_count} | Erros: {latestActiveCampaignRun.error_count}
+                    </p>
+                    <p>Inicio: {new Date(latestActiveCampaignRun.started_at).toLocaleString("pt-BR")}</p>
+                    {latestActiveCampaignRun.last_error && (
+                      <p className="text-destructive">Ultimo erro: {latestActiveCampaignRun.last_error}</p>
+                    )}
+                  </div>
+                ) : (
+                  <p className="mt-3">Quando voce importar a base, o resumo da rodada vai aparecer aqui.</p>
+                )}
+              </div>
             </CardContent>
-            <CardFooter className="justify-end">
-              <Button onClick={saveActiveCampaign} disabled={saving !== null}>
+            <CardFooter className="flex flex-wrap justify-end gap-3">
+              <Button onClick={() => triggerSync("activecampaign")} disabled={saving !== null || syncing !== null}>
+                {syncing === "activecampaign" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <DownloadCloud className="mr-2 h-4 w-4" />}
+                Importar contatos, listas e tags
+              </Button>
+              <Button onClick={saveActiveCampaign} disabled={saving !== null || syncing !== null}>
                 {saving === "activecampaign" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 Salvar ActiveCampaign
               </Button>
@@ -388,7 +557,7 @@ export default function Sources() {
               <div className="space-y-1.5">
                 <CardTitle className="text-xl">UChat</CardTitle>
                 <CardDescription>
-                  Cadastre um ou mais workspaces para distribuir contatos e reduzir gargalos por bot.
+                  Cadastre um ou mais workspaces e importe quem ja esta nos bots para unificar com a base principal.
                 </CardDescription>
               </div>
               <ConnectionBadge connected={uchatConnected} />
@@ -398,9 +567,33 @@ export default function Sources() {
                 workspaces={uchatWorkspaces.length > 0 ? uchatWorkspaces : [emptyUChatWorkspace]}
                 onChange={setUchatWorkspaces}
               />
+              <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-medium text-foreground">Ultima importacao</span>
+                  <SyncRunBadge run={latestUchatRun} />
+                </div>
+                {latestUchatRun ? (
+                  <div className="mt-3 space-y-1">
+                    <p>
+                      Processados: {latestUchatRun.processed_count} | Novos: {latestUchatRun.created_count} | Mesclados: {latestUchatRun.merged_count}
+                    </p>
+                    <p>
+                      Ignorados: {latestUchatRun.skipped_count} | Erros: {latestUchatRun.error_count}
+                    </p>
+                    <p>Inicio: {new Date(latestUchatRun.started_at).toLocaleString("pt-BR")}</p>
+                    {latestUchatRun.last_error && <p className="text-destructive">Ultimo erro: {latestUchatRun.last_error}</p>}
+                  </div>
+                ) : (
+                  <p className="mt-3">Use o importador para puxar os subscribers de cada workspace configurado.</p>
+                )}
+              </div>
             </CardContent>
-            <CardFooter className="justify-end">
-              <Button onClick={saveUChat} disabled={saving !== null}>
+            <CardFooter className="flex flex-wrap justify-end gap-3">
+              <Button onClick={() => triggerSync("uchat")} disabled={saving !== null || syncing !== null}>
+                {syncing === "uchat" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <DownloadCloud className="mr-2 h-4 w-4" />}
+                Importar subscribers do UChat
+              </Button>
+              <Button onClick={saveUChat} disabled={saving !== null || syncing !== null}>
                 {saving === "uchat" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 Salvar UChat
               </Button>

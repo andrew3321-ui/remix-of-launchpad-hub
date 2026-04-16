@@ -87,7 +87,7 @@ export default function Leads() {
         <div>
           <h1 className="text-2xl font-bold">Leads</h1>
           <p className="text-sm text-muted-foreground">
-            Base canonica do lancamento <span className="font-medium text-foreground">{activeLaunch.name}</span>, ja pronta para envio de volta as plataformas.
+            Base canonica do lancamento <span className="font-medium text-foreground">{activeLaunch.name}</span>, consolidada para revisao, automacao e futuras sincronizacoes.
           </p>
         </div>
       </div>

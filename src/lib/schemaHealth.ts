@@ -58,6 +58,12 @@ const schemaProbes: SchemaProbe[] = [
     kind: "table",
     description: "Tabela de logs operacionais do processamento",
   },
+  {
+    table: "platform_sync_runs",
+    select: "id",
+    kind: "table",
+    description: "Tabela de rodadas de sincronizacao com plataformas externas",
+  },
 ];
 
 function describeMissingProbe(probe: SchemaProbe): SchemaIssue {
@@ -145,7 +151,8 @@ export function buildLovableBootstrapPrompt(issues: SchemaIssue[]) {
     "Conecte este projeto ao backend Supabase atual do Lovable e aplique o schema do app.",
     "Use o arquivo supabase/bootstrap.sql como fonte principal ou execute os arquivos de supabase/migrations em ordem cronologica.",
     "Garanta que as estruturas abaixo existam antes de continuar:",
-    missingItems || "profiles, launches, uchat_workspaces, launch_dedupe_settings, lead_contacts, lead_contact_identities, inbound_contact_events, contact_processing_logs",
+    missingItems || "profiles, launches, uchat_workspaces, launch_dedupe_settings, lead_contacts, lead_contact_identities, inbound_contact_events, contact_processing_logs, platform_sync_runs",
+    "Depois publique ou atualize as edge functions process-contact-event, sync-platform-contacts e supabase-project-connector.",
     "Depois confirme que o frontend pode ler launches, launch_dedupe_settings e contact_processing_logs sem erro de schema ausente.",
   ].join("\n");
 }
