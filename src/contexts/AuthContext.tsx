@@ -27,7 +27,7 @@ const AuthContext = createContext<AuthContextType>({
 
 export const useAuth = () => useContext(AuthContext);
 
-const withTimeout = async <T,>(promise: Promise<T>, timeoutMs: number, message: string) => {
+const withTimeout = async <T,>(promise: PromiseLike<T>, timeoutMs: number, message: string) => {
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
   const timeoutPromise = new Promise<never>((_, reject) => {
@@ -35,7 +35,7 @@ const withTimeout = async <T,>(promise: Promise<T>, timeoutMs: number, message: 
   });
 
   try {
-    return await Promise.race([promise, timeoutPromise]);
+    return await Promise.race([Promise.resolve(promise), timeoutPromise]);
   } finally {
     if (timeoutId) clearTimeout(timeoutId);
   }
