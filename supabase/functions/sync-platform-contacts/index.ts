@@ -395,7 +395,7 @@ async function processPlatformContact(
   body: IncomingEventBody,
 ) {
   try {
-    const result = await processIncomingContactEvent(supabase, body);
+    const result = await processIncomingContactEvent(supabase as any, body);
     counters.processedCount += 1;
 
     if (result.status === "rejected") {
