@@ -352,62 +352,6 @@ export type Database = {
           },
         ]
       }
-      platform_sync_runs: {
-        Row: {
-          created_count: number
-          error_count: number
-          finished_at: string | null
-          id: string
-          last_error: string | null
-          launch_id: string
-          merged_count: number
-          metadata: Json
-          processed_count: number
-          skipped_count: number
-          source: string
-          started_at: string
-          status: string
-        }
-        Insert: {
-          created_count?: number
-          error_count?: number
-          finished_at?: string | null
-          id?: string
-          last_error?: string | null
-          launch_id: string
-          merged_count?: number
-          metadata?: Json
-          processed_count?: number
-          skipped_count?: number
-          source: string
-          started_at?: string
-          status?: string
-        }
-        Update: {
-          created_count?: number
-          error_count?: number
-          finished_at?: string | null
-          id?: string
-          last_error?: string | null
-          launch_id?: string
-          merged_count?: number
-          metadata?: Json
-          processed_count?: number
-          skipped_count?: number
-          source?: string
-          started_at?: string
-          status?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "platform_sync_runs_launch_id_fkey"
-            columns: ["launch_id"]
-            isOneToOne: false
-            referencedRelation: "launches"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       profiles: {
         Row: {
           created_at: string
