@@ -1,13 +1,413 @@
-import { Radio } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { NamedTagsEditor } from "@/components/launches/NamedTagsEditor";
+import { SchemaSetupCard } from "@/components/SchemaSetupCard";
+import { SupabaseConnectionCard } from "@/components/SupabaseConnectionCard";
+import { UChatWorkspacesEditor } from "@/components/launches/UChatWorkspacesEditor";
+import { useLaunch } from "@/contexts/LaunchContext";
+import { useToast } from "@/hooks/use-toast";
+import { supabase } from "@/integrations/supabase/client";
+import { Loader2, Radio, ShieldCheck } from "lucide-react";
+
+interface NamedTag {
+  alias: string;
+  tag: string;
+}
+
+interface UChatWorkspace {
+  id?: string;
+  workspace_name: string;
+  workspace_id: string;
+  bot_id: string;
+  api_token: string;
+  max_subscribers: number;
+  current_count: number;
+}
+
+const emptyUChatWorkspace: UChatWorkspace = {
+  workspace_name: "",
+  workspace_id: "",
+  bot_id: "",
+  api_token: "",
+  max_subscribers: 1000,
+  current_count: 0,
+};
+
+function ConnectionBadge({ connected }: { connected: boolean }) {
+  return (
+    <Badge variant={connected ? "default" : "secondary"}>
+      {connected ? "Configurado" : "Nao configurado"}
+    </Badge>
+  );
+}
 
 export default function Sources() {
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-3">
-        <Radio className="h-6 w-6 text-primary" />
-        <h1 className="text-2xl font-bold">Fontes</h1>
+  const { activeLaunch } = useLaunch();
+  const { toast } = useToast();
+
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState<"activecampaign" | "manychat" | "uchat" | null>(null);
+
+  const [acApiUrl, setAcApiUrl] = useState("");
+  const [acApiKey, setAcApiKey] = useState("");
+  const [acListId, setAcListId] = useState("");
+  const [acNamedTags, setAcNamedTags] = useState<NamedTag[]>([]);
+
+  const [manychatApiUrl, setManychatApiUrl] = useState("");
+  const [manychatApiKey, setManychatApiKey] = useState("");
+  const [manychatAccountId, setManychatAccountId] = useState("");
+
+  const [uchatWorkspaces, setUchatWorkspaces] = useState<UChatWorkspace[]>([]);
+
+  useEffect(() => {
+    const load = async () => {
+      if (!activeLaunch) {
+        setLoading(false);
+        setAcApiUrl("");
+        setAcApiKey("");
+        setAcListId("");
+        setAcNamedTags([]);
+        setManychatApiUrl("");
+        setManychatApiKey("");
+        setManychatAccountId("");
+        setUchatWorkspaces([]);
+        return;
+      }
+
+      setLoading(true);
+
+      const [{ data: launchData, error: launchError }, { data: workspaceData, error: workspaceError }] =
+        await Promise.all([
+          supabase
+            .from("launches")
+            .select(
+              "ac_api_url, ac_api_key, ac_default_list_id, ac_named_tags, manychat_api_url, manychat_api_key, manychat_account_id",
+            )
+            .eq("id", activeLaunch.id)
+            .single(),
+          supabase
+            .from("uchat_workspaces")
+            .select("*")
+            .eq("launch_id", activeLaunch.id)
+            .order("created_at", { ascending: true }),
+        ]);
+
+      if (launchError) {
+        toast({ title: "Erro ao carregar fontes", description: launchError.message, variant: "destructive" });
+      }
+
+      if (workspaceError) {
+        toast({ title: "Erro ao carregar UChat", description: workspaceError.message, variant: "destructive" });
+      }
+
+      setAcApiUrl(launchData?.ac_api_url ?? "");
+      setAcApiKey(launchData?.ac_api_key ?? "");
+      setAcListId(launchData?.ac_default_list_id ?? "");
+      setAcNamedTags(Array.isArray(launchData?.ac_named_tags) ? (launchData.ac_named_tags as unknown as NamedTag[]) : []);
+
+      setManychatApiUrl(launchData?.manychat_api_url ?? "");
+      setManychatApiKey(launchData?.manychat_api_key ?? "");
+      setManychatAccountId(launchData?.manychat_account_id ?? "");
+
+      setUchatWorkspaces(
+        workspaceData?.map((workspace) => ({
+          id: workspace.id,
+          workspace_name: workspace.workspace_name,
+          workspace_id: workspace.workspace_id,
+          bot_id: workspace.bot_id,
+          api_token: workspace.api_token,
+          max_subscribers: workspace.max_subscribers,
+          current_count: workspace.current_count,
+        })) ?? [],
+      );
+
+      setLoading(false);
+    };
+
+    load();
+  }, [activeLaunch, toast]);
+
+  const saveActiveCampaign = async () => {
+    if (!activeLaunch) return;
+
+    setSaving("activecampaign");
+    const { error } = await supabase
+      .from("launches")
+      .update({
+        ac_api_url: acApiUrl || null,
+        ac_api_key: acApiKey || null,
+        ac_default_list_id: acListId || null,
+        ac_named_tags: acNamedTags as unknown as import("@/integrations/supabase/types").Json,
+      })
+      .eq("id", activeLaunch.id);
+
+    if (error) {
+      toast({ title: "Erro ao salvar ActiveCampaign", description: error.message, variant: "destructive" });
+    } else {
+      toast({ title: "ActiveCampaign atualizado" });
+    }
+    setSaving(null);
+  };
+
+  const saveManyChat = async () => {
+    if (!activeLaunch) return;
+
+    setSaving("manychat");
+    const { error } = await supabase
+      .from("launches")
+      .update({
+        manychat_api_url: manychatApiUrl || null,
+        manychat_api_key: manychatApiKey || null,
+        manychat_account_id: manychatAccountId || null,
+      })
+      .eq("id", activeLaunch.id);
+
+    if (error) {
+      toast({ title: "Erro ao salvar ManyChat", description: error.message, variant: "destructive" });
+    } else {
+      toast({ title: "ManyChat atualizado" });
+    }
+    setSaving(null);
+  };
+
+  const saveUChat = async () => {
+    if (!activeLaunch) return;
+
+    setSaving("uchat");
+
+    const { error: deleteError } = await supabase.from("uchat_workspaces").delete().eq("launch_id", activeLaunch.id);
+
+    if (deleteError) {
+      toast({ title: "Erro ao limpar workspaces antigos", description: deleteError.message, variant: "destructive" });
+      setSaving(null);
+      return;
+    }
+
+    const rows = uchatWorkspaces
+      .filter((workspace) => workspace.workspace_name.trim() && workspace.workspace_id.trim() && workspace.bot_id.trim())
+      .map((workspace) => ({
+        launch_id: activeLaunch.id,
+        workspace_name: workspace.workspace_name,
+        workspace_id: workspace.workspace_id,
+        bot_id: workspace.bot_id,
+        api_token: workspace.api_token,
+        max_subscribers: workspace.max_subscribers,
+        current_count: workspace.current_count,
+      }));
+
+    if (rows.length > 0) {
+      const { error: insertError } = await supabase.from("uchat_workspaces").insert(rows);
+      if (insertError) {
+        toast({ title: "Erro ao salvar UChat", description: insertError.message, variant: "destructive" });
+        setSaving(null);
+        return;
+      }
+    }
+
+    toast({ title: "UChat atualizado" });
+    setSaving(null);
+  };
+
+  const activeCampaignConnected = Boolean(acApiUrl.trim() && acApiKey.trim());
+  const manyChatConnected = Boolean(manychatApiUrl.trim() && manychatApiKey.trim());
+  const uchatConnected = uchatWorkspaces.some(
+    (workspace) => workspace.workspace_name.trim() && workspace.workspace_id.trim() && workspace.bot_id.trim(),
+  );
+
+  if (!activeLaunch) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center gap-3">
+          <Radio className="h-6 w-6 text-primary" />
+          <h1 className="text-2xl font-bold">Fontes</h1>
+        </div>
+        <Card>
+          <CardHeader>
+            <CardTitle>Selecione um lancamento</CardTitle>
+            <CardDescription>
+              Escolha um lancamento na barra lateral para configurar as credenciais das bases conectadas.
+            </CardDescription>
+          </CardHeader>
+        </Card>
       </div>
-      <p className="text-muted-foreground">Configure suas fontes de leads aqui.</p>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <Radio className="h-6 w-6 text-primary" />
+          <div>
+            <h1 className="text-2xl font-bold">Fontes</h1>
+            <p className="text-sm text-muted-foreground">
+              Centralize as credenciais do lancamento <span className="font-medium text-foreground">{activeLaunch.name}</span>.
+            </p>
+          </div>
+        </div>
+        <Badge variant="outline">{activeLaunch.slug || "sem-slug"}</Badge>
+      </div>
+
+      <Card className="border-primary/20 bg-primary/5">
+        <CardContent className="flex items-start gap-3 p-6">
+          <ShieldCheck className="mt-0.5 h-5 w-5 text-primary" />
+          <div className="space-y-1">
+            <p className="font-medium">Hub de integracoes do lancamento</p>
+            <p className="text-sm text-muted-foreground">
+              Aqui voce conecta as bases de ActiveCampaign, ManyChat e UChat sem espalhar configuracao pela interface.
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+
+      <SupabaseConnectionCard
+        title="Projeto Supabase do app"
+        description="Veja qual backend Supabase esta ativo, desconecte o override atual ou conecte outro projeto usando apenas o token da conta."
+      />
+
+      <SchemaSetupCard
+        title="Bootstrap do schema"
+        description="Se esse projeto Supabase ainda nao recebeu as migrations, copie o SQL ou o prompt do Lovable para subir a estrutura do app."
+      />
+
+      {loading ? (
+        <div className="flex justify-center py-12">
+          <Loader2 className="h-6 w-6 animate-spin text-primary" />
+        </div>
+      ) : (
+        <div className="grid gap-6 xl:grid-cols-2">
+          <Card>
+            <CardHeader className="flex flex-row items-start justify-between space-y-0">
+              <div className="space-y-1.5">
+                <CardTitle className="text-xl">ActiveCampaign</CardTitle>
+                <CardDescription>Conecte a conta principal e mapeie tags internas do lancamento.</CardDescription>
+              </div>
+              <ConnectionBadge connected={activeCampaignConnected} />
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="ac-url">API URL</Label>
+                <Input
+                  id="ac-url"
+                  value={acApiUrl}
+                  onChange={(event) => setAcApiUrl(event.target.value)}
+                  placeholder="https://sua-conta.api-us1.com"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="ac-key">API Key</Label>
+                <Input
+                  id="ac-key"
+                  type="password"
+                  value={acApiKey}
+                  onChange={(event) => setAcApiKey(event.target.value)}
+                  placeholder="Cole a chave da API"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="ac-list-id">Lista padrao</Label>
+                <Input
+                  id="ac-list-id"
+                  value={acListId}
+                  onChange={(event) => setAcListId(event.target.value)}
+                  placeholder="Ex: 1"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Tags nomeadas</Label>
+                <NamedTagsEditor tags={acNamedTags} onChange={setAcNamedTags} />
+              </div>
+            </CardContent>
+            <CardFooter className="justify-end">
+              <Button onClick={saveActiveCampaign} disabled={saving !== null}>
+                {saving === "activecampaign" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Salvar ActiveCampaign
+              </Button>
+            </CardFooter>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-start justify-between space-y-0">
+              <div className="space-y-1.5">
+                <CardTitle className="text-xl">ManyChat</CardTitle>
+                <CardDescription>Use um token central para ler e sincronizar a base do ManyChat.</CardDescription>
+              </div>
+              <ConnectionBadge connected={manyChatConnected} />
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="manychat-url">API URL</Label>
+                <Input
+                  id="manychat-url"
+                  value={manychatApiUrl}
+                  onChange={(event) => setManychatApiUrl(event.target.value)}
+                  placeholder="https://api.manychat.com"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="manychat-key">API Token</Label>
+                <Input
+                  id="manychat-key"
+                  type="password"
+                  value={manychatApiKey}
+                  onChange={(event) => setManychatApiKey(event.target.value)}
+                  placeholder="Cole o token da API"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="manychat-account">Workspace ou conta</Label>
+                <Input
+                  id="manychat-account"
+                  value={manychatAccountId}
+                  onChange={(event) => setManychatAccountId(event.target.value)}
+                  placeholder="ID interno da conta, inbox ou workspace"
+                />
+              </div>
+            </CardContent>
+            <CardFooter className="justify-end">
+              <Button onClick={saveManyChat} disabled={saving !== null}>
+                {saving === "manychat" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Salvar ManyChat
+              </Button>
+            </CardFooter>
+          </Card>
+
+          <Card className="xl:col-span-2">
+            <CardHeader className="flex flex-row items-start justify-between space-y-0">
+              <div className="space-y-1.5">
+                <CardTitle className="text-xl">UChat</CardTitle>
+                <CardDescription>
+                  Cadastre um ou mais workspaces para distribuir contatos e reduzir gargalos por bot.
+                </CardDescription>
+              </div>
+              <ConnectionBadge connected={uchatConnected} />
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <UChatWorkspacesEditor
+                workspaces={uchatWorkspaces.length > 0 ? uchatWorkspaces : [emptyUChatWorkspace]}
+                onChange={setUchatWorkspaces}
+              />
+            </CardContent>
+            <CardFooter className="justify-end">
+              <Button onClick={saveUChat} disabled={saving !== null}>
+                {saving === "uchat" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Salvar UChat
+              </Button>
+            </CardFooter>
+          </Card>
+        </div>
+      )}
     </div>
   );
 }

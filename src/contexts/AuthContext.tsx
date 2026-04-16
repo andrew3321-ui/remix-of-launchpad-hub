@@ -1,12 +1,18 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from "react";
 import { Session, User } from "@supabase/supabase-js";
-import { supabase } from "@/integrations/supabase/client";
+import {
+  getSupabaseConnectionConfig,
+  subscribeToSupabaseConnection,
+  supabase,
+  type SupabaseConnectionConfig,
+} from "@/integrations/supabase/client";
 
 interface AuthContextType {
   session: Session | null;
   user: User | null;
   profile: { full_name: string | null } | null;
   loading: boolean;
+  connection: SupabaseConnectionConfig;
   signOut: () => Promise<void>;
 }
 
@@ -15,6 +21,7 @@ const AuthContext = createContext<AuthContextType>({
   user: null,
   profile: null,
   loading: true,
+  connection: getSupabaseConnectionConfig(),
   signOut: async () => {},
 });
 
@@ -25,13 +32,41 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<{ full_name: string | null } | null>(null);
   const [loading, setLoading] = useState(true);
+  const [connection, setConnection] = useState(getSupabaseConnectionConfig());
+  const [connectionVersion, setConnectionVersion] = useState(0);
+
+  useEffect(() => {
+    return subscribeToSupabaseConnection((nextConnection) => {
+      setConnection(nextConnection);
+      setConnectionVersion((current) => current + 1);
+    });
+  }, []);
 
   useEffect(() => {
     let mounted = true;
+    setLoading(true);
+    setSession(null);
+    setUser(null);
+    setProfile(null);
+
+    const loadProfile = async (userId: string) => {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("full_name")
+        .eq("user_id", userId)
+        .single();
+
+      if (error) {
+        console.warn("profile lookup skipped:", error.message);
+        return null;
+      }
+
+      return data;
+    };
 
     // Safety timeout - never stay loading forever
     const timeout = setTimeout(() => {
-      if (mounted && loading) {
+      if (mounted) {
         console.warn("Auth loading timeout - forcing loaded state");
         setLoading(false);
       }
@@ -48,14 +83,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setSession(session);
       setUser(session?.user ?? null);
       if (session?.user) {
-        supabase
-          .from("profiles")
-          .select("full_name")
-          .eq("user_id", session.user.id)
-          .single()
-          .then(({ data }) => {
-            if (mounted) setProfile(data);
-          });
+        loadProfile(session.user.id).then((data) => {
+          if (mounted) setProfile(data);
+        });
       }
       setLoading(false);
     }).catch((err) => {
@@ -71,11 +101,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(session?.user ?? null);
 
         if (session?.user) {
-          const { data } = await supabase
-            .from("profiles")
-            .select("full_name")
-            .eq("user_id", session.user.id)
-            .single();
+          const data = await loadProfile(session.user.id);
           if (mounted) setProfile(data);
         } else {
           setProfile(null);
@@ -89,14 +115,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       clearTimeout(timeout);
       subscription.unsubscribe();
     };
-  }, []);
+  }, [connectionVersion]);
 
   const signOut = async () => {
     await supabase.auth.signOut();
   };
 
   return (
-    <AuthContext.Provider value={{ session, user, profile, loading, signOut }}>
+    <AuthContext.Provider value={{ session, user, profile, loading, connection, signOut }}>
       {children}
     </AuthContext.Provider>
   );
