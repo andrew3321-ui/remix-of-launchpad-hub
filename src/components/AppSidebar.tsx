@@ -1,8 +1,10 @@
+import { useState } from "react";
 import {
   FileText,
   GitBranch,
   LayoutDashboard,
   ListOrdered,
+  Loader2,
   LogOut,
   Radio,
   Rocket,
@@ -50,6 +52,19 @@ export function AppSidebar() {
   const { launches, activeLaunch, setActiveLaunch } = useLaunch();
   const { state } = useSidebar();
   const collapsed = state === "collapsed";
+  const [signingOut, setSigningOut] = useState(false);
+
+  const handleSignOut = async () => {
+    if (signingOut) return;
+    setSigningOut(true);
+
+    try {
+      await signOut();
+      window.location.replace("/login");
+    } finally {
+      setSigningOut(false);
+    }
+  };
 
   return (
     <Sidebar variant="floating" collapsible="icon" className="border-none">
@@ -136,10 +151,11 @@ export function AppSidebar() {
         <Button
           variant="outline"
           className="w-full justify-start gap-3 border-white/10 bg-white/5 text-slate-200"
-          onClick={signOut}
+          onClick={handleSignOut}
+          disabled={signingOut}
         >
-          <LogOut className="h-4 w-4" />
-          {!collapsed && <span>Sair</span>}
+          {signingOut ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogOut className="h-4 w-4" />}
+          {!collapsed && <span>{signingOut ? "Saindo..." : "Sair"}</span>}
         </Button>
       </SidebarFooter>
     </Sidebar>

@@ -27,6 +27,35 @@ const AuthContext = createContext<AuthContextType>({
 
 export const useAuth = () => useContext(AuthContext);
 
+const withTimeout = async <T,>(promise: Promise<T>, timeoutMs: number, message: string) => {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+};
+
+const clearStoredSupabaseSessions = () => {
+  const keysToRemove: string[] = [];
+
+  for (let index = 0; index < localStorage.length; index += 1) {
+    const key = localStorage.key(index);
+    if (!key) continue;
+
+    if (key.startsWith("sb-") && (key.includes("auth-token") || key.includes("code-verifier"))) {
+      keysToRemove.push(key);
+    }
+  }
+
+  keysToRemove.forEach((key) => localStorage.removeItem(key));
+};
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [user, setUser] = useState<User | null>(null);
@@ -49,21 +78,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
     setProfile(null);
 
-    const loadProfile = async (userId: string) => {
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("full_name")
-        .eq("user_id", userId)
-        .single();
-
-      if (error) {
-        console.warn("profile lookup skipped:", error.message);
-        return null;
-      }
-
-      return data;
-    };
-
     // Safety timeout - never stay loading forever
     const timeout = setTimeout(() => {
       if (mounted) {
@@ -73,41 +87,39 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }, 5000);
 
     // Get initial session
-    supabase.auth.getSession().then(({ data: { session }, error }) => {
-      if (!mounted) return;
-      if (error) {
-        console.error("getSession error:", error);
+    withTimeout(
+      supabase.auth.getSession(),
+      5000,
+      "A sessao demorou demais para carregar.",
+    )
+      .then(({ data: { session }, error }) => {
+        if (!mounted) return;
+        if (error) {
+          console.error("getSession error:", error);
+          setLoading(false);
+          return;
+        }
+
+        setSession(session);
+        setUser(session?.user ?? null);
         setLoading(false);
-        return;
-      }
-      setSession(session);
-      setUser(session?.user ?? null);
-      if (session?.user) {
-        loadProfile(session.user.id).then((data) => {
-          if (mounted) setProfile(data);
-        });
-      }
-      setLoading(false);
-    }).catch((err) => {
-      console.error("getSession catch:", err);
-      if (mounted) setLoading(false);
-    });
+      })
+      .catch((err) => {
+        console.error("getSession catch:", err);
+        if (mounted) setLoading(false);
+      });
 
     // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (_event, session) => {
+      (_event, session) => {
         if (!mounted) return;
         setSession(session);
         setUser(session?.user ?? null);
-
-        if (session?.user) {
-          const data = await loadProfile(session.user.id);
-          if (mounted) setProfile(data);
-        } else {
+        if (!session?.user) {
           setProfile(null);
         }
         setLoading(false);
-      }
+      },
     );
 
     return () => {
@@ -117,8 +129,65 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, [connectionVersion]);
 
+  useEffect(() => {
+    if (!user) {
+      setProfile(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadProfile = async () => {
+      const { data, error } = await withTimeout(
+        supabase
+          .from("profiles")
+          .select("full_name")
+          .eq("user_id", user.id)
+          .single(),
+        5000,
+        "A consulta do perfil demorou demais para responder.",
+      );
+
+      if (cancelled) return;
+
+      if (error) {
+        console.warn("profile lookup skipped:", error.message);
+        setProfile(null);
+        return;
+      }
+
+      setProfile(data);
+    };
+
+    loadProfile().catch((error) => {
+      if (cancelled) return;
+      console.warn("profile lookup failed:", error);
+      setProfile(null);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user, connectionVersion]);
+
   const signOut = async () => {
-    await supabase.auth.signOut();
+    setLoading(true);
+    setSession(null);
+    setUser(null);
+    setProfile(null);
+
+    try {
+      await withTimeout(
+        supabase.auth.signOut({ scope: "local" }),
+        4000,
+        "O logout demorou demais para responder.",
+      );
+    } catch (error) {
+      console.warn("signOut fallback:", error);
+    } finally {
+      clearStoredSupabaseSessions();
+      setLoading(false);
+    }
   };
 
   return (
