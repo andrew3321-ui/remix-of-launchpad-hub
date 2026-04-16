@@ -354,6 +354,7 @@ export type Database = {
       }
       platform_sync_runs: {
         Row: {
+          created_at: string
           created_count: number
           error_count: number
           finished_at: string | null
@@ -367,8 +368,10 @@ export type Database = {
           source: string
           started_at: string
           status: string
+          updated_at: string
         }
         Insert: {
+          created_at?: string
           created_count?: number
           error_count?: number
           finished_at?: string | null
@@ -382,8 +385,10 @@ export type Database = {
           source: string
           started_at?: string
           status?: string
+          updated_at?: string
         }
         Update: {
+          created_at?: string
           created_count?: number
           error_count?: number
           finished_at?: string | null
@@ -397,6 +402,7 @@ export type Database = {
           source?: string
           started_at?: string
           status?: string
+          updated_at?: string
         }
         Relationships: [
           {

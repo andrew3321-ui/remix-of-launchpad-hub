@@ -1,4 +1,6 @@
+// deno-lint-ignore-file no-explicit-any
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+type AnySupabaseClient = ReturnType<typeof createClient>;
 import {
   ProcessContactError,
   processIncomingContactEvent,
@@ -193,7 +195,7 @@ async function mapWithConcurrency<T>(
 }
 
 async function insertProcessingLog(
-  supabase: ReturnType<typeof createClient>,
+  supabase: AnySupabaseClient,
   launchId: string,
   source: SyncSource,
   level: "info" | "warning" | "error" | "success",
@@ -214,7 +216,7 @@ async function insertProcessingLog(
 }
 
 async function createSyncRun(
-  supabase: ReturnType<typeof createClient>,
+  supabase: AnySupabaseClient,
   launchId: string,
   source: SyncSource,
   metadata: JsonRecord,
@@ -238,7 +240,7 @@ async function createSyncRun(
 }
 
 async function completeSyncRun(
-  supabase: ReturnType<typeof createClient>,
+  supabase: AnySupabaseClient,
   runId: string,
   status: "completed" | "failed",
   counters: SyncCounters,
@@ -262,7 +264,7 @@ async function completeSyncRun(
 }
 
 async function resolveLaunch(
-  supabase: ReturnType<typeof createClient>,
+  supabase: AnySupabaseClient,
   body: SyncRequestBody,
 ) {
   const launchLookup = body.launchId
@@ -274,7 +276,7 @@ async function resolveLaunch(
     : supabase
         .from("launches")
         .select("id, slug, name, ac_api_url, ac_api_key, ac_default_list_id")
-        .eq("slug", body.launchSlug)
+        .eq("slug", body.launchSlug as string)
         .maybeSingle();
 
   const { data: launch, error } = await launchLookup;
@@ -286,7 +288,7 @@ async function resolveLaunch(
 }
 
 async function fetchUchatWorkspaces(
-  supabase: ReturnType<typeof createClient>,
+  supabase: AnySupabaseClient,
   launchId: string,
 ) {
   const { data, error } = await supabase
@@ -387,13 +389,13 @@ async function fetchActiveCampaignContactSnapshot(
 }
 
 async function processPlatformContact(
-  supabase: ReturnType<typeof createClient>,
+  supabase: AnySupabaseClient,
   counters: SyncCounters,
   sampleErrors: string[],
   body: IncomingEventBody,
 ) {
   try {
-    const result = await processIncomingContactEvent(supabase, body);
+    const result = await processIncomingContactEvent(supabase as any, body);
     counters.processedCount += 1;
 
     if (result.status === "rejected") {
@@ -412,7 +414,7 @@ async function processPlatformContact(
 }
 
 async function syncActiveCampaignContacts(
-  supabase: ReturnType<typeof createClient>,
+  supabase: AnySupabaseClient,
   launch: LaunchRow,
   counters: SyncCounters,
   sampleErrors: string[],
@@ -533,7 +535,7 @@ async function syncActiveCampaignContacts(
 }
 
 async function syncUchatContacts(
-  supabase: ReturnType<typeof createClient>,
+  supabase: AnySupabaseClient,
   launch: LaunchRow,
   counters: SyncCounters,
   sampleErrors: string[],

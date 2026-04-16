@@ -80,7 +80,7 @@ export function LaunchDialog({ open, onOpenChange, launchId, onSaved }: Props) {
     setLoading(false);
   };
 
-  const withTimeout = async <T,>(promise: Promise<T>, message: string, timeoutMs = 15000): Promise<T> => {
+  const withTimeout = async <T,>(promise: PromiseLike<T>, message: string, timeoutMs = 15000): Promise<T> => {
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
     const timeoutPromise = new Promise<never>((_, reject) => {
@@ -88,7 +88,7 @@ export function LaunchDialog({ open, onOpenChange, launchId, onSaved }: Props) {
     });
 
     try {
-      return await Promise.race([promise, timeoutPromise]);
+      return await Promise.race([Promise.resolve(promise), timeoutPromise]);
     } finally {
       if (timeoutId) clearTimeout(timeoutId);
     }
